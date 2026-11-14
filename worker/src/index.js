@@ -23,8 +23,9 @@ function newCode() {
 // Needs secrets TURN_KEY_ID and TURN_KEY_API_TOKEN; without them we return no servers and
 // the client falls back to STUN only.
 async function turnCredentials(request, env) {
-  const none = () => Response.json({ iceServers: [] })
-  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return none()
+  const none = (reason) => Response.json({ iceServers: [], reason })
+  if (!env.TURN_KEY_ID) return none('TURN_KEY_ID not set on this Worker')
+  if (!env.TURN_KEY_API_TOKEN) return none('TURN_KEY_API_TOKEN not set on this Worker')
   const allowed = (env.ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean)
   const origin = request.headers.get('Origin')
   if (allowed.length && origin && !allowed.includes(origin)) return new Response('Forbidden', { status: 403 })
@@ -34,9 +35,9 @@ async function turnCredentials(request, env) {
       headers: { Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ ttl: 86400 }),
     })
-    if (!res.ok) return none()
+    if (!res.ok) return none(`Cloudflare replied ${res.status}: ${(await res.text()).slice(0, 200)}`)
     return new Response(res.body, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } })
-  } catch { return none() }
+  } catch (e) { return none(`fetch failed: ${e.message}`) }
 }
 
 export default {
