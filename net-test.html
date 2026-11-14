@@ -1,0 +1,14 @@
+<!doctype html><meta charset="utf-8"><body><script type="module">
+import { FilesetResolver, HandLandmarker } from '/node_modules/@mediapipe/tasks-vision/vision_bundle.mjs'
+const report = (o) => fetch('http://localhost:5599/result', { method: 'POST', body: JSON.stringify(o) })
+const fetched = []
+new PerformanceObserver(l => l.getEntries().forEach(e => fetched.push(e.name.split('/').slice(-2).join('/')))).observe({ type: 'resource', buffered: true })
+try {
+  const files = await FilesetResolver.forVisionTasks('/mediapipe')
+  const lm = await HandLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: '/models/hand_landmarker.task', delegate: 'CPU' }, runningMode: 'IMAGE', numHands: 1 })
+  const c = document.createElement('canvas'); c.width = c.height = 64
+  const r = lm.detect(c)
+  await new Promise(r => setTimeout(r, 300))
+  await report({ ok: true, detected: r.landmarks.length, fetched: [...new Set(fetched)].filter(n => /mediapipe|models/.test(n)) })
+} catch (e) { await report({ ok: false, error: String(e) }) }
+</script>
