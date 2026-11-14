@@ -1,0 +1,30 @@
+# One Cloudflare Worker serves the game AND runs the room-code relay, so the
+# page's default signaling address (wss://<same host>/signal) just works.
+#
+#   Dashboard: build command `npm run build`, deploy command `npx wrangler deploy`,
+#   root directory = the repo root.   Or from a terminal:  npm run deploy
+#
+# Static files come from dist/. Only /signal and /health run the Worker code
+# (worker/src/index.js); everything else is answered straight from the assets.
+name = "bounce"
+main = "worker/src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true  # also reachable at bounce.<your-subdomain>.workers.dev
+preview_urls = false
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/signal", "/health"]
+
+[vars]
+# Sites allowed to open the relay (comma-separated). Empty = any site may use it.
+ALLOWED_ORIGINS = "https://bounce.jam06452.uk,https://bounce.danjward8.workers.dev"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"] # SQLite-backed Durable Objects are the ones available on the free plan
