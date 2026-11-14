@@ -66,9 +66,11 @@ export function createNet() {
   function openSocket(joinCode) {
     return new Promise((resolve, reject) => {
       let ws
-      try { ws = new WebSocket(signalingUrl(joinCode)) } catch { return reject(new Error('Bad signaling URL.')) }
+      const url = signalingUrl(joinCode), where = new URL(url).host
+      try { ws = new WebSocket(url) } catch { return reject(new Error(`Bad signaling URL (${url}).`)) }
       ws.onopen = () => resolve(ws)
-      ws.onerror = () => reject(new Error('Cannot reach the signaling server.'))
+      // The browser doesn't say why (wrong address, blocked origin, server down), so name the address it tried.
+      ws.onerror = () => reject(new Error(`Cannot reach the signaling server at ${where}.`))
     })
   }
 
