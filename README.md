@@ -19,11 +19,9 @@ in this game try catching daven with your hands !!!!
 and throw it to your friends if you have them!!
 
 
+<img width="1911" height="907" alt="image" src="https://github.com/user-attachments/assets/1b542809-4ee2-4d03-89ba-3762d8250410" />
 
-
-
-
-
+<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/03c10522-5d76-4a23-88ec-5184b4134a82" />
 
 art and background (including leavees) by aanya    
 
