@@ -16,14 +16,27 @@ document.querySelector('#app').innerHTML = `
 <header><span>BACK TO THE BOUNCE</span><span>01 / HAND TRACKING</span></header>
 <main><h1>Your hand is the controller.</h1><p>Two laptops. One game of catch. Start by getting your hand in frame.</p>
 <button id="panel-toggle" aria-expanded="false" aria-controls="panel">Camera</button><button id="net-chip" aria-controls="menu">PLAY ONLINE</button>
-<div id="menu" role="dialog" aria-label="Game menu"><div class="menu-card"><div class="menu-title">BACK TO<br>THE BOUNCE</div>
-<div class="host-row"><button id="net-host2" class="primary">Host 2-player</button><button id="net-host4" class="primary">Host 4-player</button></div>
-<div class="menu-or">or join a friend</div>
-<div class="net-row"><input id="net-code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Room code"><button id="net-join">Join</button></div>
-<div id="net-bigcode" hidden></div>
-<small id="net-status" role="status">Not connected</small>
-<button id="net-leave" hidden>Cancel</button>
-<button id="net-solo" class="link">Practice alone</button></div></div>
+<div id="menu" role="dialog" aria-label="Game menu">
+  <div class="menu-card">
+    <div class="menu-title">BACK TO<br>THE BOUNCE</div>
+
+    <div class="host-row">
+      <button id="net-host2" class="primary">Host 2-player</button>
+      <button id="net-host4" class="primary">Host 4-player</button>
+    </div>
+
+    <div class="menu-or">or join a friend</div>
+    <div class="net-row">
+      <input id="net-code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Room code">
+      <button id="net-join">Join</button>
+    </div>
+
+    <div id="net-bigcode" hidden></div>
+    <small id="net-status" role="status">Not connected</small>
+    <button id="net-leave" hidden>Cancel</button>
+    <button id="net-solo" class="link">Practice alone</button>
+  </div>
+</div>
 <div class="workspace closed" id="panel" inert><section class="camera"><video autoplay muted playsinline></video><canvas></canvas><div class="placeholder"><span id="camera-message">Enable your webcam to start.</span><small id="camera-help">Use the Enable webcam button beside this preview.</small></div><span class="badge">LOCAL CAMERA · MIRRORED</span></section>
 <aside><div class="status" role="status">Camera off</div><h2 id="gesture">No hand</h2><p id="hint">Keep one hand visible, with your palm facing the camera.</p><dl><div><dt>Tracking rate</dt><dd id="fps">—</dd></div><div><dt>Inference time</dt><dd id="latency">—</dd></div><div><dt>Palm position</dt><dd id="position">—</dd></div></dl><button id="start">Enable webcam ↗</button><button id="stop" disabled>Stop camera</button><button id="fullscreen">Fullscreen ⛶</button><label><input id="overlay" type="checkbox" checked> Show landmarks</label></aside></div>
 <section class="court" id="court"></section>
@@ -117,9 +130,9 @@ function tick() {
         const position = { x:1-palm.x, y:palm.y }
         $('#gesture').textContent = {catch:'Catch · closed fist',bounce:'Bounce · open palm',neutral:'Ready · relax'}[gesture]
         $('#position').textContent = `${position.x.toFixed(2)}, ${position.y.toFixed(2)}`
-        if ($('#overlay').checked) { drawing.drawConnectors(points, HandLandmarker.HAND_CONNECTIONS, {color:'#adf779',lineWidth:2}); drawing.drawLandmarks(points,{color:'#fff',radius:3,lineWidth:1}) }
+        if ($('#overlay').checked) { drawing.drawConnectors(points, HandLandmarker.HAND_CONNECTIONS, {color:'#b8d86b',lineWidth:2}); drawing.drawLandmarks(points,{color:'#fff',radius:3,lineWidth:1}) }
         ctx.beginPath(); ctx.arc(palm.x*canvas.width,palm.y*canvas.height, fistClosed ? 20 : 35,0,Math.PI*2)
-        ctx.strokeStyle = fistClosed ? '#ffb86b' : '#adf779'; ctx.lineWidth = 4; ctx.stroke()
+        ctx.strokeStyle = fistClosed ? '#ffb86b' : '#b8d86b'; ctx.lineWidth = 4; ctx.stroke()
         publish({tracked:true,timestamp:now,gesture,position,fistClosed})
       }
     }
@@ -186,20 +199,24 @@ if (import.meta.hot) import.meta.hot.dispose(() => { stop(); detector?.close(); 
 // open the panel so the error and the retry button are visible.
 start().then(() => { if (!running) setPanel(true) })
 
-const notes = document.querySelector("#notes");
+// Falling leaves: decorative, drawn over the court but under the UI, never blocking clicks.
+const leafUrls = Object.values(import.meta.glob('../assets/leaves/*.png', { eager: true, query: '?url', import: 'default' }))
+const notes = document.createElement('div')
+notes.id = 'notes'
+document.body.appendChild(notes)
 function makenote() {
-  const note = document.createElement("img");
-  note.classList.add("note");
-  note.src = [
-    "assets/leaves/Screenshot_2026-11-14_153937-removebg-preview.png",
-    "assets/leaves/Screenshot_2026-11-14_154013-removebg-preview.png",
-    "assets/leaves/Screenshot_2026-11-14_154023-removebg-preview.png"
-  ][Math.floor(Math.random() * 3)];
-  note.style.left = Math.random() * 100 + "%";
-  note.style.animationDuration = (8 + Math.random() * 8) + "s";
-  note.style.setProperty("--rotation", (360 + Math.random() * 720) + "deg");
-  note.style.width = (25 + Math.random() * 25) + "px";
-  notes.appendChild(note);
-  note.addEventListener("animationend", () => note.remove());
+  if (document.hidden || !leafUrls.length) return // animations pause in background tabs, so don't pile leaves up
+  const note = document.createElement('img')
+  note.classList.add('note')
+  note.alt = ''
+  note.src = leafUrls[Math.floor(Math.random() * leafUrls.length)]
+  note.style.left = Math.random() * 100 + '%'
+  note.style.width = (25 + Math.random() * 25) + 'px'
+  note.style.animationDuration = (8 + Math.random() * 8) + 's'
+  note.style.setProperty('--rotation', (360 + Math.random() * 720) * (Math.random() < 0.5 ? -1 : 1) + 'deg')
+  note.style.setProperty('--sway', (20 + Math.random() * 50) * (Math.random() < 0.5 ? -1 : 1) + 'px')
+  notes.appendChild(note)
+  note.addEventListener('animationend', () => note.remove())
 }
-setInterval(makenote, 1000);
+for (let i = 0; i < 6; i++) setTimeout(makenote, i * 400) // already some in the air at load
+setInterval(makenote, 1000)
