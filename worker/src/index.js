@@ -1,30 +1,19 @@
-// Same protocol as server/rooms.js (see that file for the message list), run on
-// Cloudflare. The Worker picks a Durable Object by room code; the object holds
-// that one room and relays handshake messages between its players. Game data
-// never passes through here.
-//
-// The room code has to be known before the socket reaches the right object, so
-// it travels in the URL: creating = /signal (the Worker invents a code),
-// joining = /signal?code=K7QF.
 
-const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no I, O, 0, 1
+const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 const CODE_RE = /^[A-HJ-NP-Z2-9]{4}$/
 const SIZES = [2, 4]
 const ROOM_TTL_MS = 2 * 60 * 60 * 1000
-const MAX_MESSAGE = 16 * 1024 // SDP blobs are a few KB
-const RATE_WINDOW_MS = 5000, RATE_MAX = 400 // a 4-player mesh trickles a lot of ICE
+const MAX_MESSAGE = 16 * 1024
+const RATE_WINDOW_MS = 5000, RATE_MAX = 400
 
 function newCode() {
   const bytes = crypto.getRandomValues(new Uint8Array(4))
-  return Array.from(bytes, b => ALPHABET[b % ALPHABET.length]).join('') // 256 % 32 == 0: no modulo bias
+  return Array.from(bytes, b => ALPHABET[b % ALPHABET.length]).join('')
 }
 
-// Mints short-lived Cloudflare TURN credentials so the relay secret never reaches the browser.
-// Needs secrets TURN_KEY_ID and TURN_KEY_API_TOKEN; without them we return no servers and
-// the client falls back to STUN only.
 async function turnCredentials(request, env) {
   const none = (reason) => Response.json({ iceServers: [], reason })
-  const keyId = env.TURN_KEY_ID ?? env.TURN_TOKEN_ID // accept the common misnaming too
+  const keyId = env.TURN_KEY_ID ?? env.TURN_TOKEN_ID
   if (!keyId) return none('TURN_KEY_ID not set on this Worker')
   if (!env.TURN_KEY_API_TOKEN) return none('TURN_KEY_API_TOKEN not set on this Worker')
   const allowed = (env.ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean)
@@ -54,7 +43,6 @@ export default {
 
     const joining = url.searchParams.has('code')
     const asked = (url.searchParams.get('code') ?? '').trim().toUpperCase()
-    // A malformed code goes to a fixed empty room, which answers "no such room".
     const code = joining ? (CODE_RE.test(asked) ? asked : 'XXXX-invalid') : newCode()
 
     const headers = new Headers(request.headers)
@@ -67,7 +55,7 @@ export default {
 export class Room {
   constructor(state) {
     this.state = state
-    this.room = null // { code, size, members: [peer|null, …], started }
+    this.room = null
     this.sockets = new Set()
   }
 
@@ -100,7 +88,7 @@ export class Room {
     } else for (const m of others) this.send(m, { type: 'peer-left', index: peer.index })
   }
 
-  async alarm() { // room expired
+  async alarm() {
     for (const ws of this.sockets) ws.close(1000, 'room expired')
     this.room = null
   }
@@ -119,7 +107,7 @@ export class Room {
         if (intent !== 'create') return this.send(peer, { type: 'error', reason: 'bad-message' })
         if (peer.joined) return this.send(peer, { type: 'error', reason: 'already-in-room' })
         if (!SIZES.includes(message.size)) return this.send(peer, { type: 'error', reason: 'bad-message' })
-        if (this.room) return this.send(peer, { type: 'error', reason: 'server-busy' }) // the (rare) code collision
+        if (this.room) return this.send(peer, { type: 'error', reason: 'server-busy' })
         const members = Array(message.size).fill(null); members[0] = peer
         this.room = { code, size: message.size, members, started: false }
         peer.index = 0; peer.joined = true

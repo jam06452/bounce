@@ -217,7 +217,6 @@ footer {
   }
 }
 
-/* Game-first layout: the court fills the window; camera + controls float over it. */
 body {
   overflow: hidden;
 }

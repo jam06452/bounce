@@ -1,32 +1,17 @@
-// Room-code signaling relay for WebRTC. It only ferries the handshake (offers,
-// answers, ICE candidates) between players; game data never touches it.
-// A room holds 2 or 4 players. Seats are numbered in join order: host = 0.
-//
-//   client → server   {type:'create', size:2|4}       host opens a room
-//                     {type:'join', code}             guest takes the next free seat
-//                     {type:'signal', to, data}       relayed to seat `to`
-//   server → client   {type:'created', code, size, index:0}
-//                     {type:'joined', code, size, index, peers:[seat, …]}
-//                     {type:'peer-joined', index}     a new player took a seat
-//                     {type:'signal', from, data}
-//                     {type:'peer-left', index} / {type:'room-closed'} / {type:'error', reason}
-//
-// Once the room is full it is "started": nobody else can join, and players
-// closing their sockets (they do, once linked) don't disturb the rest.
 import { randomInt } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 
-const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no I, O, 0, 1
+const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 const CODE_RE = /^[A-HJ-NP-Z2-9]{4}$/
 const SIZES = [2, 4]
 const MAX_ROOMS = 500
 const ROOM_TTL_MS = 2 * 60 * 60 * 1000
-const MAX_PAYLOAD = 16 * 1024 // SDP blobs are a few KB
-const RATE_WINDOW_MS = 5000, RATE_MAX = 400 // a 4-player mesh trickles a lot of ICE
+const MAX_PAYLOAD = 16 * 1024
+const RATE_WINDOW_MS = 5000, RATE_MAX = 400
 
 export function createSignaling({ allowedOrigins = [] } = {}) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD })
-  const rooms = new Map() // code → { size, members: [ws|null, …], started, created }
+  const rooms = new Map()
 
   const send = (ws, message) => { if (ws?.readyState === 1) ws.send(JSON.stringify(message)) }
   function newCode() {
@@ -102,7 +87,6 @@ export function createSignaling({ allowedOrigins = [] } = {}) {
     })
   })
 
-  // Drop dead sockets and abandoned rooms.
   const sweep = setInterval(() => {
     for (const ws of wss.clients) {
       if (!ws.isAlive) { ws.terminate(); continue }
@@ -114,7 +98,6 @@ export function createSignaling({ allowedOrigins = [] } = {}) {
   sweep.unref()
 
   return {
-    /** Call from an http(s) server's 'upgrade' event for the signaling path. */
     handleUpgrade(req, socket, head) {
       const origin = req.headers.origin
       if (allowedOrigins.length && !allowedOrigins.includes(origin)) {

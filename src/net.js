@@ -1,27 +1,10 @@
-// Peer-to-peer links between players (2 or 4).
-//
-// A WebSocket to the signaling relay is used only for the handshake: the host
-// opens a room and gets a short code, guests enter it and take seats in join
-// order (host = seat 0), and everyone swaps WebRTC offers/answers/ICE candidates
-// through the relay. Every pair of players gets its own direct link (a full
-// mesh), so a ball passed between any two seats takes the shortest route. When
-// all of a player's links are open the WebSocket is closed.
-//
-// Each link has two channels, so each message gets the delivery it needs:
-//   'state'  unordered, no retransmits (UDP-like): positions. Stale = useless.
-//   'events' reliable + ordered: ball hand-offs, serve, score.
-//
-// Events (on `net.events`):  'status'  → {state, role, code, size, index, players, message?}
-//                            'message' → {channel, data, from}      'rtt' → ms (mean over peers)
 
 const turn = import.meta.env.VITE_TURN_URL
 const BASE_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
-  // Strict NATs (many mobile/corporate networks) can't connect directly and need a relay.
   ...(turn ? [{ urls: turn, username: import.meta.env.VITE_TURN_USERNAME, credential: import.meta.env.VITE_TURN_CREDENTIAL }] : []),
 ]
 let ICE_SERVERS = BASE_ICE_SERVERS
-// Ask the Worker for short-lived TURN credentials (Cloudflare TURN). Failure just means STUN only.
 async function loadIceServers() {
   try {
     const base = new URL(import.meta.env.VITE_SIGNALING_URL || `${location.protocol}//${location.host}/signal`)
@@ -30,10 +13,8 @@ async function loadIceServers() {
     const res = await fetch(base, { signal: AbortSignal.timeout(3000) })
     const { iceServers } = await res.json()
     if (Array.isArray(iceServers) && iceServers.length) ICE_SERVERS = [...BASE_ICE_SERVERS, ...iceServers]
-  } catch { /* keep STUN-only */ }
+  } catch {}
 }
-// Joining puts the room code in the URL: the Cloudflare relay needs it to pick
-// the right room before any message is sent. The Node relay just ignores it.
 const signalingUrl = (joinCode) => {
   const url = new URL(import.meta.env.VITE_SIGNALING_URL ||
     `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/signal`)
@@ -52,7 +33,7 @@ const ERRORS = {
 export function createNet() {
   const events = new EventTarget()
   let socket = null, role = null, code = null, size = 0, index = -1, players = 0
-  const peers = new Map() // seat → { pc, channels, queued, rtt }
+  const peers = new Map()
   let pingTimer = null, session = 0, state = 'idle'
 
   const emit = (type, detail) => events.dispatchEvent(new CustomEvent(type, { detail }))
@@ -67,7 +48,7 @@ export function createNet() {
     peer.pc.close(); peers.delete(seat)
   }
   function teardown() {
-    session++ // invalidates any in-flight async work from the previous attempt
+    session++
     clearInterval(pingTimer); pingTimer = null
     if (socket) { socket.onclose = socket.onmessage = socket.onerror = null; socket.close() }
     socket = null
@@ -81,7 +62,6 @@ export function createNet() {
       const url = signalingUrl(joinCode), where = new URL(url).host
       try { ws = new WebSocket(url) } catch { return reject(new Error(`Bad signaling URL (${url}).`)) }
       ws.onopen = () => resolve(ws)
-      // The browser doesn't say why (wrong address, blocked origin, server down), so name the address it tried.
       ws.onerror = () => reject(new Error(`Cannot reach the signaling server at ${where}.`))
     })
   }
@@ -117,12 +97,11 @@ export function createNet() {
       case 'peer-joined':
         players++
         setState(lobbyState())
-        // The lower seat always makes the offer, so the two sides never collide.
         if (index < message.index) startPeer(message.index, true)
         return
       case 'signal': return onSignal(message.from, message.data)
       case 'peer-left':
-        if (state === 'connected') return // direct links are independent of the relay
+        if (state === 'connected') return
         closePeer(message.index); players--
         return setState('waiting')
       case 'room-closed': return fail('The host closed the room.')
@@ -188,18 +167,16 @@ export function createNet() {
     }
   }
 
-  // Linked once every other player has both channels open.
   function checkConnected() {
     if (state === 'connected' || peers.size !== size - 1) return
     for (const p of peers.values()) {
       if (p.channels.state?.readyState !== 'open' || p.channels.events?.readyState !== 'open') return
     }
-    if (socket) { socket.onclose = null; socket.close(); socket = null } // the relay is no longer needed
+    if (socket) { socket.onclose = null; socket.close(); socket = null }
     setState('connected')
     pingTimer = setInterval(() => send('state', { t: 'ping', n: performance.now() }), 1000)
   }
 
-  /** Send to one seat, or to everyone if `to` is omitted. True if anything was sent. */
   function send(channel, data, to) {
     const targets = to === undefined ? [...peers.values()] : [peers.get(to)].filter(Boolean)
     const text = JSON.stringify(data)

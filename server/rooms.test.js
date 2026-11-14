@@ -30,7 +30,7 @@ test('host creates, guest joins, signals are relayed both ways', async () => {
   assert.equal(created.type, 'created'); assert.match(created.code, /^[A-HJ-NP-Z2-9]{4}$/)
   assert.deepEqual([created.size, created.index], [2, 0])
   const { code } = created
-  guest.sendJson({ type: 'join', code: code.toLowerCase() }) // case-insensitive
+  guest.sendJson({ type: 'join', code: code.toLowerCase() })
   assert.deepEqual(await guest.next(), { type: 'joined', code, size: 2, index: 1, peers: [0] })
   assert.deepEqual(await host.next(), { type: 'peer-joined', index: 1 })
   host.sendJson({ type: 'signal', to: 1, data: { description: { type: 'offer', sdp: 'x' } } })
@@ -54,10 +54,10 @@ test('4 players: seats follow join order and signals go to the addressed seat on
   c.sendJson({ type: 'join', code })
   assert.deepEqual(await c.next(), { type: 'joined', code, size: 4, index: 3, peers: [0, 1, 2] })
   for (const w of [h, a, b]) assert.deepEqual(await w.next(), { type: 'peer-joined', index: 3 })
-  b.sendJson({ type: 'signal', to: 3, data: { n: 1 } }) // seat 2 → seat 3 only
+  b.sendJson({ type: 'signal', to: 3, data: { n: 1 } })
   assert.deepEqual(await c.next(), { type: 'signal', from: 2, data: { n: 1 } })
-  a.sendJson({ type: 'signal', to: 1, data: { n: 2 } }) // to self: dropped
-  a.sendJson({ type: 'signal', to: 9, data: { n: 3 } }) // no such seat: dropped
+  a.sendJson({ type: 'signal', to: 1, data: { n: 2 } })
+  a.sendJson({ type: 'signal', to: 9, data: { n: 3 } })
   a.sendJson({ type: 'signal', to: 0, data: { n: 4 } })
   assert.deepEqual(await h.next(), { type: 'signal', from: 1, data: { n: 4 } })
   for (const w of [h, a, b, c]) w.close(); stop()
@@ -76,7 +76,7 @@ test('errors: unknown room, full room, bad size, junk input', async () => {
   assert.deepEqual(await b.next(), { type: 'error', reason: 'room-full' })
   b.send('not json')
   assert.deepEqual(await b.next(), { type: 'error', reason: 'bad-message' })
-  b.sendJson({ type: 'signal', to: 0, data: { x: 1 } }) // not in a room: silently dropped, no crash
+  b.sendJson({ type: 'signal', to: 0, data: { x: 1 } })
   b.sendJson({ type: 'nope' })
   assert.deepEqual(await b.next(), { type: 'error', reason: 'bad-message' })
   for (const ws of [host, a, b]) ws.close(); stop()
@@ -93,7 +93,7 @@ test('lobby: guest leaving frees the seat; host leaving closes the room', async 
   assert.deepEqual(await g2.next(), { type: 'peer-left', index: 1 })
   const g3 = await client()
   g3.sendJson({ type: 'join', code })
-  assert.deepEqual(await g3.next(), { type: 'joined', code, size: 4, index: 1, peers: [0, 2] }) // takes the freed seat
+  assert.deepEqual(await g3.next(), { type: 'joined', code, size: 4, index: 1, peers: [0, 2] })
   assert.deepEqual(await host.next(), { type: 'peer-joined', index: 1 })
   assert.deepEqual(await g2.next(), { type: 'peer-joined', index: 1 })
   host.close()
@@ -106,11 +106,11 @@ test('started room: players closing sockets does not disturb the rest, and nobod
   const host = await client(), guest = await client(), late = await client()
   host.sendJson({ type: 'create', size: 2 }); const { code } = await host.next()
   guest.sendJson({ type: 'join', code }); await guest.next(); await host.next()
-  host.close() // a linked host closes its relay socket; the guest may still be negotiating
+  host.close()
   await new Promise(r => setTimeout(r, 30))
   late.sendJson({ type: 'join', code })
   assert.deepEqual(await late.next(), { type: 'error', reason: 'room-full' })
-  guest.sendJson({ type: 'signal', to: 0, data: { x: 1 } }) // host seat is empty: dropped, no crash
+  guest.sendJson({ type: 'signal', to: 0, data: { x: 1 } })
   guest.close(); late.close(); stop()
 })
 

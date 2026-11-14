@@ -1,4 +1,3 @@
-# Cloudflare Pages: these files only change when MediaPipe is upgraded.
 /mediapipe/*
   Cache-Control: public, max-age=604800
 /models/*

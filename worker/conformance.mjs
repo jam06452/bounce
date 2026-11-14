@@ -1,5 +1,3 @@
-// Protocol check against a running relay:  node worker/conformance.mjs ws://localhost:8787/signal
-// Works for both the Node relay (server/) and the Cloudflare Worker (worker/).
 import assert from 'node:assert/strict'
 import { WebSocket } from 'ws'
 
@@ -40,11 +38,11 @@ await check('4 players: join order = seats, peers announced, signals routed by s
   for (const w of [h, a, b]) assert.deepEqual(await w.next(), { type: 'peer-joined', index: 3 })
   b.json({ type: 'signal', to: 3, data: { n: 1 } })
   assert.deepEqual(await c.next(), { type: 'signal', from: 2, data: { n: 1 } })
-  a.json({ type: 'signal', to: 1, data: { n: 2 } }) // to self: dropped
-  a.json({ type: 'signal', to: 9, data: { n: 3 } }) // no such seat: dropped
+  a.json({ type: 'signal', to: 1, data: { n: 2 } })
+  a.json({ type: 'signal', to: 9, data: { n: 3 } })
   a.json({ type: 'signal', to: 0, data: { n: 4 } })
   assert.deepEqual(await h.next(), { type: 'signal', from: 1, data: { n: 4 } })
-  const late = await connect(code); late.json({ type: 'join', code }) // room is full and started
+  const late = await connect(code); late.json({ type: 'join', code })
   assert.deepEqual(await late.next(), { type: 'error', reason: 'room-full' })
 })
 
@@ -81,7 +79,7 @@ await check('started room survives players closing their sockets', async () => {
   h.close(); await new Promise(r => setTimeout(r, 100))
   const late = await connect(code); late.json({ type: 'join', code })
   assert.deepEqual(await late.next(), { type: 'error', reason: 'room-full' })
-  g.json({ type: 'signal', to: 0, data: { x: 1 } }) // empty seat: dropped, no crash
+  g.json({ type: 'signal', to: 0, data: { x: 1 } })
 })
 
 for (const ws of sockets) ws.terminate()

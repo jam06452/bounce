@@ -3,10 +3,6 @@ import { FilesetResolver, HandLandmarker, DrawingUtils } from '@mediapipe/tasks-
 import { LandmarkFilter } from './trackingFilter.js'
 import { createGame } from './game.js'
 import { net } from './net.js'
-// Everything is served from this app (public/), so tracking needs no external requests.
-// public/mediapipe/ must match the pinned @mediapipe/tasks-vision version; re-copy
-// node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.* there if you upgrade it
-// (the *_module_* variant is only used with forVisionTasks(path, true), so it is not copied).
 const base = import.meta.env.BASE_URL
 const PALM = [0, 5, 9, 13, 17]
 const mean = (pts, idx) => idx.reduce((m, i) => ({ x: m.x + pts[i].x / idx.length, y: m.y + pts[i].y / idx.length, z: m.z + pts[i].z / idx.length }), { x: 0, y: 0, z: 0 })
@@ -52,7 +48,6 @@ const status = (message) => {
   if (!$('.placeholder').hidden) $('#camera-message').textContent = message
 }
 
-// Consumers (Phaser / future WebRTC) can subscribe without coupling to the camera UI.
 function publish(state) { window.dispatchEvent(new CustomEvent('handinput', { detail: state })) }
 function reset() {
   fistClosed = false; landmarkFilter.reset(); lastTime = 0; lastVideoTime = -1
@@ -99,8 +94,6 @@ async function start() {
     stop(); status(error.name === 'NotAllowedError' ? 'Camera access denied. Allow camera access in your browser, then retry.' : error.name === 'NotFoundError' ? 'No webcam found. Connect a camera and retry.' : error.message)
   }
 }
-// Run detection the moment the camera delivers a frame instead of polling on
-// the next display refresh (saves up to one refresh of delay).
 const hasFrameCallback = 'requestVideoFrameCallback' in HTMLVideoElement.prototype
 const scheduleFrame = () => { frame = hasFrameCallback ? video.requestVideoFrameCallback(tick) : requestAnimationFrame(tick) }
 const cancelFrame = () => hasFrameCallback ? video.cancelVideoFrameCallback(frame) : cancelAnimationFrame(frame)
@@ -119,8 +112,6 @@ function tick() {
         if (lastTime) $('#fps').textContent = `${Math.round(1000 / (now - lastTime))} fps`
         lastTime = now
         const dist = (a, b) => Math.hypot((a.x-b.x)*canvas.width, (a.y-b.y)*canvas.height)
-        // All four fingers must fold toward the palm. Ignore the thumb so a
-        // thumb/index pinch cannot trigger catch. Hysteresis reduces flicker.
         const fingerReach = [8,12,16,20].map(i =>
           dist(points[i], points[0]) / Math.max(1, dist(points[i-2], points[0])))
         fistClosed = fingerReach.every(reach => reach < (fistClosed ? 1.08 : 0.95))
@@ -139,13 +130,10 @@ function tick() {
     scheduleFrame()
   } catch (error) { stop(); status(`Tracking stopped: ${error.message}. Try enabling the webcam again.`) }
 }
-// The panel is hidden by default but stays rendered (just invisible) so the
-// video keeps producing frames for tracking.
 function setPanel(open) {
   $('#panel').classList.toggle('closed', !open); $('#panel').inert = !open
   $('#panel-toggle').setAttribute('aria-expanded', String(open))
 }
-// --- online play ---------------------------------------------------------
 let rtt = null
 const NET_TEXT = {
   idle: () => 'Not connected', connecting: () => 'Connecting to server…',
@@ -154,7 +142,7 @@ const NET_TEXT = {
   connected: ({ index, size }) => `Connected · player ${index + 1} of ${size}${rtt === null ? '' : ` · ${rtt.toFixed(0)} ms`}`,
   error: ({ message }) => message ?? 'Connection failed.',
 }
-let netStatus = { state: 'idle' }, menuOpen = true // the menu is the start screen
+let netStatus = { state: 'idle' }, menuOpen = true
 function renderNet() {
   const { state, code } = netStatus, busy = state !== 'idle' && state !== 'error'
   $('#menu').hidden = !menuOpen
@@ -172,8 +160,8 @@ function renderNet() {
 }
 net.events.addEventListener('status', (e) => {
   netStatus = e.detail; if (netStatus.state !== 'connected') rtt = null
-  if (netStatus.state === 'connected') menuOpen = false // linked: get out of the way and play
-  else if (netStatus.state === 'error') menuOpen = true // show what went wrong
+  if (netStatus.state === 'connected') menuOpen = false
+  else if (netStatus.state === 'error') menuOpen = true
   renderNet()
 })
 $('#net-chip').addEventListener('click', () => { menuOpen = !menuOpen; renderNet() })
@@ -183,7 +171,6 @@ $('#net-host2').addEventListener('click', () => net.host(2))
 $('#net-host4').addEventListener('click', () => net.host(4))
 $('#net-join').addEventListener('click', () => { const code = $('#net-code').value.trim().toUpperCase(); if (code.length === 4) net.join(code) })
 $('#net-code').addEventListener('input', (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z2-9]/g, '') })
-$('#net-code').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') $('#net-join').click() }) // typing 'f' must not toggle fullscreen
 $('#net-leave').addEventListener('click', () => net.leave())
 renderNet()
 
@@ -195,17 +182,14 @@ $('#fullscreen').addEventListener('click', toggleFullscreen)
 window.addEventListener('keydown', e => { if (e.key === 'f' && !e.metaKey && !e.ctrlKey) toggleFullscreen() })
 window.addEventListener('pagehide', stop)
 if (import.meta.hot) import.meta.hot.dispose(() => { stop(); detector?.close(); game.destroy(true); window.removeEventListener('pagehide',stop) })
-// Start the camera on load. If it can't start (permission denied, no camera),
-// open the panel so the error and the retry button are visible.
 start().then(() => { if (!running) setPanel(true) })
 
-// Falling leaves: decorative, drawn over the court but under the UI, never blocking clicks.
 const leafUrls = Object.values(import.meta.glob('../assets/leaves/*.png', { eager: true, query: '?url', import: 'default' }))
 const notes = document.createElement('div')
 notes.id = 'notes'
 document.body.appendChild(notes)
 function makenote() {
-  if (document.hidden || !leafUrls.length) return // animations pause in background tabs, so don't pile leaves up
+  if (document.hidden || !leafUrls.length) return
   const note = document.createElement('img')
   note.classList.add('note')
   note.alt = ''
@@ -218,5 +202,5 @@ function makenote() {
   notes.appendChild(note)
   note.addEventListener('animationend', () => note.remove())
 }
-for (let i = 0; i < 6; i++) setTimeout(makenote, i * 400) // already some in the air at load
+for (let i = 0; i < 6; i++) setTimeout(makenote, i * 400)
 setInterval(makenote, 1000)

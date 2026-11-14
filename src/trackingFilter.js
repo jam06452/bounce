@@ -1,16 +1,7 @@
-// Port of hand_tracking/final/tracking_filter.py.
-// Optional median spike rejection followed by a speed-adaptive low-pass
-// (One-Euro style) filter. Image (normalized) and world (metre) landmarks keep
-// separate tuning so units are never mixed. Missing detections are never
-// filled with stale landmarks.
 
 const POINTS = 21, LAYER = POINTS * 3, SIZE = LAYER * 2
 const MAX_GAP_S = 0.3
 
-// Python defaults (robot control): { medianFrames: 3, minCutoff: 1.2, beta: [4, 20], derivativeCutoff: 1 }.
-// Game defaults trade a little jitter at rest for much lower latency:
-// no median (it always costs a frame), higher resting cutoff, and a faster
-// speed estimate so the filter opens up as soon as the hand starts moving.
 export const LOW_LATENCY = { medianFrames: 1, minCutoff: 4, beta: [30, 100], derivativeCutoff: 4 }
 
 export class LandmarkFilter {
@@ -26,11 +17,6 @@ export class LandmarkFilter {
     this.label = null
   }
 
-  /**
-   * @param {object} result HandLandmarker result
-   * @param {number} timestamp seconds
-   * @returns {{landmarks: object[]|null, worldLandmarks: object[]|null, label: string|null}}
-   */
   update(result, timestamp) {
     const hand = result.landmarks?.[0], world = result.worldLandmarks?.[0]
     const empty = { landmarks: null, worldLandmarks: null, label: null }

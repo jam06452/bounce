@@ -13,34 +13,24 @@ import woosh3Url from '../assets/audio/Woosh3.wav'
 import { exitTarget, entryState } from './topology.js'
 
 const WIDTH = 800, HEIGHT = 450
-const PADDLE = { length: 180, thickness: 24, hitPad: 12 } // hitPad: extra reach on each side beyond the drawn log, so grazing hits still count
-const MAX_STEP = 6 // px: the ball (and paddle) move at most this far between collision checks, so nothing tunnels through
-// How far the bar bends when catching. 1.15π is a deep "C", like a cupped hand.
+const PADDLE = { length: 180, thickness: 24, hitPad: 12 }
+const MAX_STEP = 6
 const CATCH_ARC = Math.PI * 1.15
-const CATCH_SPEED = 24 // higher = snappier open/close
+const CATCH_SPEED = 24
 const SEGMENTS = 32
 
-// Online, the ball has to be able to reach the far side, so gravity is lighter than solo.
-const BALL = { radius: 18, gravity: 700, onlineGravity: 300, wallBounce: 0.85, paddleBounce: 0.9, maxSpeed: 1400 }
-const CATCH_REACH = 60 // px: a closed hand grabs a ball this close to the cup
-const CUP_RADIUS = PADDLE.length / CATCH_ARC // radius of the fully closed C
+const BALL = { radius: 18, gravity: 700, onlineGravity: 300, wallBounce: 0.85, paddleBounce: 0.9, maxSpeed: 1400, bounceDamping: 0.9 }
+const CATCH_REACH = 60
+const CUP_RADIUS = PADDLE.length / CATCH_ARC
 const PADDLE_VELOCITY_SMOOTHING = 25
-// Tracking arrives at camera rate (~30/s) but the game draws at display rate.
-// Between updates the paddle is dead-reckoned along the hand's velocity so it
-// moves every frame instead of in steps, and leads slightly to hide latency.
 const LEAD_MS = 20, MAX_EXTRAPOLATE_MS = 50
-// Hand-to-paddle gain, applied around the centre of the camera frame:
-// 1 = paddle moves exactly as far as your hand does in the image, 2 = twice as far.
-// Raise it if you can't reach the court edges without leaving the camera frame.
 const HAND_GAIN = 1.5
 
-/** Points of a bar of fixed length bent by `curl` (0 = straight, 1 = full C), centred on the origin.
- *  The C opens upward, toward the incoming ball. */
 function paddlePoints(curl) {
   const angle = curl * CATCH_ARC
   const points = []
   for (let i = 0; i <= SEGMENTS; i++) {
-    const s = (i / SEGMENTS - 0.5) * PADDLE.length // arc length from the middle
+    const s = (i / SEGMENTS - 0.5) * PADDLE.length
     if (angle < 1e-3) { points.push({ x: s, y: 0 }); continue }
     const radius = PADDLE.length / angle, phi = s / radius
     points.push({ x: radius * Math.sin(phi), y: -radius * (1 - Math.cos(phi)) })
@@ -49,7 +39,6 @@ function paddlePoints(curl) {
   return points.map(p => ({ x: p.x, y: p.y - shift }))
 }
 
-/** Closest point on segment ab to p. */
 function closestOnSegment(p, a, b) {
   const abx = b.x - a.x, aby = b.y - a.y, len2 = abx * abx + aby * aby
   const t = len2 === 0 ? 0 : Phaser.Math.Clamp(((p.x - a.x) * abx + (p.y - a.y) * aby) / len2, 0, 1)
@@ -58,7 +47,7 @@ function closestOnSegment(p, a, b) {
 
 const BOUNCE_KEYS = ['bounce1', 'bounce2', 'bounce3'], WOOSH_KEYS = ['woosh1', 'woosh2', 'woosh3']
 
-const LOG_HEIGHT = 34 // drawn thickness of the log (collision still uses PADDLE.thickness)
+const LOG_HEIGHT = 34
 
 class CourtScene extends Phaser.Scene {
   preload() {
@@ -75,10 +64,8 @@ class CourtScene extends Phaser.Scene {
   }
 
   create() {
-    // Phaser holds playback until the browser's first user gesture, then starts it.
     this.sound.play('music', { loop: true, volume: 0.5 })
     this.add.image(WIDTH / 2, HEIGHT / 2, 'bg').setDisplaySize(WIDTH, HEIGHT)
-    // Slice the log texture so it can bend along the paddle's curve.
     const logTex = this.textures.get('log'), src = logTex.getSourceImage()
     for (let i = 0; i < SEGMENTS; i++) {
       logTex.add(`s${i}`, 0, Math.floor(i * src.width / SEGMENTS), 0, Math.ceil(src.width / SEGMENTS) + 1, src.height)
@@ -96,17 +83,15 @@ class CourtScene extends Phaser.Scene {
     this.paddleVelocity = { x: 0, y: 0 }
     this.lastPaddle = null
     this.launch()
-    this.input.on('pointerdown', () => { if (this.hasBall) this.launch() }) // click the court to serve again
+    this.input.on('pointerdown', () => { if (this.hasBall) this.launch() })
 
-    // Online, only the screen the ball is on simulates it. Leaving through the top
-    // edge hands it to the other player, whose screen is mirrored (back to back).
     this.wasOnline = false
     this.onStatus = () => {
       const online = net.state === 'connected'
       if (online === this.wasOnline) return
       this.wasOnline = online
-      if (!online) this.launch() // peer gone: take the ball back
-      else if (net.index === 0) this.launch() // the host (seat 0) serves first
+      if (!online) this.launch()
+      else if (net.index === 0) this.launch()
       else this.setHasBall(false)
     }
     this.onNetMessage = (e) => {
@@ -128,12 +113,11 @@ class CourtScene extends Phaser.Scene {
       net.events.removeEventListener('status', this.onStatus)
       net.events.removeEventListener('message', this.onNetMessage)
     })
-    // Hand tracking publishes normalized (0–1) mirrored coordinates via 'handinput'.
     this.onHand = (e) => {
       const { tracked, position, timestamp } = e.detail
       if (tracked && this.target && timestamp > this.targetTime) {
         const dtMs = timestamp - this.targetTime
-        const k = 0.6 // light smoothing of the velocity estimate
+        const k = 0.6
         this.targetVelocity.x += k * ((position.x - this.target.x) / dtMs - this.targetVelocity.x)
         this.targetVelocity.y += k * ((position.y - this.target.y) / dtMs - this.targetVelocity.y)
       } else this.targetVelocity = { x: 0, y: 0 }
@@ -157,7 +141,6 @@ class CourtScene extends Phaser.Scene {
     this.setHasBall(true)
   }
 
-  /** Send the ball out through `edge` to the player seated there. False if that edge bounces or the link isn't open. */
   passBall(edge) {
     const { ball, velocity: v } = this
     const to = net.state === 'connected' ? exitTarget(net.size, net.index, edge) : null
@@ -173,11 +156,9 @@ class CourtScene extends Phaser.Scene {
     const dt = Math.min(delta, 33) / 1000
     this.paddle.clear()
     this.logSprites.forEach(l => l.setVisible(false))
-    // Always ease back to flat when the hand is lost or opens.
     const goal = this.catching ? 1 : 0
     this.curl += (goal - this.curl) * (1 - Math.exp(-CATCH_SPEED * delta / 1000))
     if (!this.target) {
-      // No hand: nothing to hold the ball, so it drops.
       this.held = false; this.lastPaddle = null; this.prevWorld = null
       this.stepBall(dt, null)
       return
@@ -202,7 +183,6 @@ class CourtScene extends Phaser.Scene {
         .setDisplaySize(segLen + 1, LOG_HEIGHT).setVisible(true)
     })
 
-    // Paddle velocity (smoothed) so a moving paddle hits harder and a flick throws the ball.
     if (this.lastPaddle && dt > 0) {
       const k = 1 - Math.exp(-PADDLE_VELOCITY_SMOOTHING * dt)
       this.paddleVelocity.x += k * ((cx - this.lastPaddle.x) / dt - this.paddleVelocity.x)
@@ -210,7 +190,6 @@ class CourtScene extends Phaser.Scene {
     } else this.paddleVelocity = { x: 0, y: 0 }
     this.lastPaddle = { x: cx, y: cy }
 
-    // Where a caught ball sits: on top of the flat bar, sliding into the middle of the C as it closes.
     const mid = world[SEGMENTS / 2]
     const rest = (1 - this.curl) * (PADDLE.thickness / 2 + BALL.radius) + this.curl * CUP_RADIUS
     const prev = this.prevWorld && this.prevWorld.length === world.length ? this.prevWorld : world
@@ -223,7 +202,6 @@ class CourtScene extends Phaser.Scene {
     const ball = this.ball, v = this.velocity
 
     if (this.held && !(paddle && this.catching)) {
-      // Fist opened (or hand lost): release, carrying the paddle's motion.
       this.held = false
       if (paddle) { v.x = this.paddleVelocity.x; v.y = this.paddleVelocity.y }
       this.sfx(WOOSH_KEYS)
@@ -235,8 +213,6 @@ class CourtScene extends Phaser.Scene {
       v.x = v.y = 0
     } else {
       v.y += (net.state === 'connected' ? BALL.onlineGravity : BALL.gravity) * dt
-      // Sub-step: a fast ball or a flicked paddle can cross the whole log in one frame,
-      // so move in small slices and check for a hit after each one.
       const travel = Math.hypot(v.x - (paddle ? this.paddleVelocity.x : 0), v.y - (paddle ? this.paddleVelocity.y : 0)) * dt
       const steps = Math.min(20, Math.max(1, Math.ceil(travel / MAX_STEP)))
       for (let i = 1; i <= steps; i++) {
@@ -249,14 +225,13 @@ class CourtScene extends Phaser.Scene {
           if (this.collide({ world: at, cup: paddle.cup })) { this.held = true; break }
         }
         this.bounceOffWalls()
-        if (!this.hasBall) break // passed to another player
+        if (!this.hasBall) break
       }
     }
     const speed = Math.hypot(v.x, v.y)
     if (speed > BALL.maxSpeed) { v.x *= BALL.maxSpeed / speed; v.y *= BALL.maxSpeed / speed }
   }
 
-  /** Ball vs. paddle. Returns true if the ball should now be held (closed hand). */
   collide({ world, cup }) {
     const ball = this.ball, v = this.velocity, reach = BALL.radius + PADDLE.thickness / 2 + PADDLE.hitPad
     if (this.catching && Math.hypot(ball.x - cup.x, ball.y - cup.y) < CATCH_REACH) return true
@@ -264,12 +239,13 @@ class CourtScene extends Phaser.Scene {
       const c = closestOnSegment(ball, world[i], world[i + 1])
       const dx = ball.x - c.x, dy = ball.y - c.y, dist = Math.hypot(dx, dy)
       if (dist >= reach) continue
-      if (this.catching) return true // closed hand: grab it
+      if (this.catching) return true
       const nx = dist > 1e-6 ? dx / dist : 0, ny = dist > 1e-6 ? dy / dist : -1
-      ball.x = c.x + nx * reach; ball.y = c.y + ny * reach // push out of the paddle
+      ball.x = c.x + nx * reach; ball.y = c.y + ny * reach
       const rel = (v.x - this.paddleVelocity.x) * nx + (v.y - this.paddleVelocity.y) * ny
       if (rel < -60) this.sfx(BOUNCE_KEYS, Math.min(1, 0.4 + -rel / 800))
       if (rel < 0) { v.x -= (1 + BALL.paddleBounce) * rel * nx; v.y -= (1 + BALL.paddleBounce) * rel * ny }
+      this.dampenBallSpeed()
       return false
     }
     return false
@@ -279,20 +255,25 @@ class CourtScene extends Phaser.Scene {
     const ball = this.ball, v = this.velocity, r = BALL.radius
     if (ball.x < r) {
       if (v.x < 0 && this.passBall('left')) return
-      ball.x = r; v.x = Math.abs(v.x) * BALL.wallBounce
+      ball.x = r; v.x = Math.abs(v.x) * BALL.wallBounce; this.dampenBallSpeed()
     }
     if (ball.x > WIDTH - r) {
       if (v.x > 0 && this.passBall('right')) return
-      ball.x = WIDTH - r; v.x = -Math.abs(v.x) * BALL.wallBounce
+      ball.x = WIDTH - r; v.x = -Math.abs(v.x) * BALL.wallBounce; this.dampenBallSpeed()
     }
     if (ball.y < r) {
-      if (v.y < 0 && this.passBall('top')) return // off to another screen
-      ball.y = r; v.y = Math.abs(v.y) * BALL.wallBounce
+      if (v.y < 0 && this.passBall('top')) return
+      ball.y = r; v.y = Math.abs(v.y) * BALL.wallBounce; this.dampenBallSpeed()
     }
     if (ball.y > HEIGHT - r) {
-      ball.y = HEIGHT - r; v.y = -Math.abs(v.y) * BALL.wallBounce
-      if (Math.abs(v.y) < 40) v.y = 0 // settle instead of jittering forever
+      ball.y = HEIGHT - r; v.y = -Math.abs(v.y) * BALL.wallBounce; this.dampenBallSpeed()
+      if (Math.abs(v.y) < 40) v.y = 0
     }
+  }
+
+  dampenBallSpeed() {
+    this.velocity.x *= BALL.bounceDamping
+    this.velocity.y *= BALL.bounceDamping
   }
 }
 

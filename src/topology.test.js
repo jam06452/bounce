@@ -15,7 +15,7 @@ test('4 players: left → next, right → previous, top → across, bottom bounc
     assert.equal(exitTarget(4, seat, 'top'), (seat + 2) % 4)
     assert.equal(exitTarget(4, seat, 'bottom'), null)
   }
-  assert.equal(exitTarget(4, 3, 'left'), 0) // wraps in join order
+  assert.equal(exitTarget(4, 3, 'left'), 0)
   assert.equal(exitTarget(4, 0, 'right'), 3)
 })
 

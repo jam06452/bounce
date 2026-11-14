@@ -4,10 +4,8 @@ import sys
 INPUT_FILE = "input.jpg"
 OUTPUT_FILE = "output.png"
 
-# Colour to make transparent (RGB)
 TRANSPARENT_COLOUR = (255, 255, 255)  # White
 
-# Colour matching tolerance (0 = exact match)
 TOLERANCE = 30
 
 image = Image.open(INPUT_FILE).convert("RGBA")

@@ -1,8 +1,3 @@
-// Standalone signaling server for internet play. Deploy this anywhere that
-// supports WebSockets and put TLS in front of it (the game page is HTTPS, so
-// browsers require wss://).
-//
-//   PORT=8787 ALLOWED_ORIGINS=https://your-game.example node server/index.js
 import { createServer } from 'node:http'
 import { createSignaling } from './rooms.js'
 
