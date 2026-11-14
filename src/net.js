@@ -15,13 +15,31 @@
 //                            'message' → {channel, data, from}      'rtt' → ms (mean over peers)
 
 const turn = import.meta.env.VITE_TURN_URL
-const ICE_SERVERS = [
+const BASE_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   // Strict NATs (many mobile/corporate networks) can't connect directly and need a relay.
   ...(turn ? [{ urls: turn, username: import.meta.env.VITE_TURN_USERNAME, credential: import.meta.env.VITE_TURN_CREDENTIAL }] : []),
 ]
-const signalingUrl = () => import.meta.env.VITE_SIGNALING_URL ||
-  `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/signal`
+let ICE_SERVERS = BASE_ICE_SERVERS
+// Ask the Worker for short-lived TURN credentials (Cloudflare TURN). Failure just means STUN only.
+async function loadIceServers() {
+  try {
+    const base = new URL(import.meta.env.VITE_SIGNALING_URL || `${location.protocol}//${location.host}/signal`)
+    base.protocol = base.protocol === 'wss:' ? 'https:' : base.protocol === 'ws:' ? 'http:' : base.protocol
+    base.pathname = '/turn'; base.search = ''
+    const res = await fetch(base, { signal: AbortSignal.timeout(3000) })
+    const { iceServers } = await res.json()
+    if (Array.isArray(iceServers) && iceServers.length) ICE_SERVERS = [...BASE_ICE_SERVERS, ...iceServers]
+  } catch { /* keep STUN-only */ }
+}
+// Joining puts the room code in the URL: the Cloudflare relay needs it to pick
+// the right room before any message is sent. The Node relay just ignores it.
+const signalingUrl = (joinCode) => {
+  const url = new URL(import.meta.env.VITE_SIGNALING_URL ||
+    `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/signal`)
+  if (joinCode) url.searchParams.set('code', joinCode)
+  return url.toString()
+}
 
 const ERRORS = {
   'no-such-room': 'No room with that code.',
@@ -57,12 +75,14 @@ export function createNet() {
   }
   function fail(message) { teardown(); setState('error', message) }
 
-  function openSocket() {
+  function openSocket(joinCode) {
     return new Promise((resolve, reject) => {
       let ws
-      try { ws = new WebSocket(signalingUrl()) } catch { return reject(new Error('Bad signaling URL.')) }
+      const url = signalingUrl(joinCode), where = new URL(url).host
+      try { ws = new WebSocket(url) } catch { return reject(new Error(`Bad signaling URL (${url}).`)) }
       ws.onopen = () => resolve(ws)
-      ws.onerror = () => reject(new Error('Cannot reach the signaling server.'))
+      // The browser doesn't say why (wrong address, blocked origin, server down), so name the address it tried.
+      ws.onerror = () => reject(new Error(`Cannot reach the signaling server at ${where}.`))
     })
   }
 
@@ -71,7 +91,9 @@ export function createNet() {
     const mine = session
     setState('connecting')
     try {
-      const ws = await openSocket()
+      await loadIceServers()
+      if (mine !== session) return
+      const ws = await openSocket(firstMessage.code)
       if (mine !== session) return ws.close()
       socket = ws
       ws.onmessage = (e) => handleSignaling(e.data)

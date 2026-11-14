@@ -39,3 +39,24 @@ button.link{background:none;border:0;color:#909d92;font-weight:400;font-size:13p
 .host-row{display:flex;gap:8px}.host-row button{flex:1;padding:18px 8px}
 .menu-card .host-row .primary{font-size:14px}
 .host-row #net-host2:disabled,.host-row #net-host4:disabled{opacity:.4}
+#notes {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+.note {
+    position: absolute;
+    top: -60px;
+    height: auto;
+    animation: falling linear forwards;
+}
+@keyframes falling {
+    0% {
+        transform: translateY(0) rotate(0deg);
+    }
+
+    100% {
+        transform: translateY(110vh) rotate(var(--rotation));
+    }
+}

@@ -1,0 +1,41 @@
+body {
+    background-image: url("assets/textures/origionals/bg.jpg");
+    background-size: 100% auto;
+    background-position: center bottom;
+    background-repeat: no-repeat;
+    background-color: #000;
+    min-height: 100vh;
+    margin: 0;
+}
+html, body {
+    min-height: 100%;
+    margin: 0;
+}
+
+body {
+    min-height: 100vh;
+}
+#notes {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 1000;
+}
+
+.note {
+    position: absolute;
+    top: -60px;
+    height: auto;
+    animation: falling linear forwards;
+}
+
+@keyframes falling {
+    from {
+        transform: translateY(0) rotate(0deg);
+    }
+
+    to {
+        transform: translateY(110vh) rotate(var(--rotation));
+    }
+}
