@@ -13,7 +13,8 @@ import woosh3Url from '../assets/audio/Woosh3.wav'
 import { exitTarget, entryState } from './topology.js'
 
 const WIDTH = 800, HEIGHT = 450
-const PADDLE = { length: 180, thickness: 24 }
+const PADDLE = { length: 180, thickness: 24, hitPad: 12 } // hitPad: extra reach on each side beyond the drawn log, so grazing hits still count
+const MAX_STEP = 6 // px: the ball (and paddle) move at most this far between collision checks, so nothing tunnels through
 // How far the bar bends when catching. 1.15π is a deep "C", like a cupped hand.
 const CATCH_ARC = Math.PI * 1.15
 const CATCH_SPEED = 24 // higher = snappier open/close
@@ -177,7 +178,7 @@ class CourtScene extends Phaser.Scene {
     this.curl += (goal - this.curl) * (1 - Math.exp(-CATCH_SPEED * delta / 1000))
     if (!this.target) {
       // No hand: nothing to hold the ball, so it drops.
-      this.held = false; this.lastPaddle = null
+      this.held = false; this.lastPaddle = null; this.prevWorld = null
       this.stepBall(dt, null)
       return
     }
@@ -212,7 +213,9 @@ class CourtScene extends Phaser.Scene {
     // Where a caught ball sits: on top of the flat bar, sliding into the middle of the C as it closes.
     const mid = world[SEGMENTS / 2]
     const rest = (1 - this.curl) * (PADDLE.thickness / 2 + BALL.radius) + this.curl * CUP_RADIUS
-    this.stepBall(dt, { world, cup: { x: mid.x, y: mid.y - rest } })
+    const prev = this.prevWorld && this.prevWorld.length === world.length ? this.prevWorld : world
+    this.prevWorld = world
+    this.stepBall(dt, { world, prev, cup: { x: mid.x, y: mid.y - rest } })
   }
 
   stepBall(dt, paddle) {
@@ -232,10 +235,22 @@ class CourtScene extends Phaser.Scene {
       v.x = v.y = 0
     } else {
       v.y += (net.state === 'connected' ? BALL.onlineGravity : BALL.gravity) * dt
-      ball.x += v.x * dt
-      ball.y += v.y * dt
-      if (paddle && this.collide(paddle)) this.held = true
-      this.bounceOffWalls()
+      // Sub-step: a fast ball or a flicked paddle can cross the whole log in one frame,
+      // so move in small slices and check for a hit after each one.
+      const travel = Math.hypot(v.x - (paddle ? this.paddleVelocity.x : 0), v.y - (paddle ? this.paddleVelocity.y : 0)) * dt
+      const steps = Math.min(20, Math.max(1, Math.ceil(travel / MAX_STEP)))
+      for (let i = 1; i <= steps; i++) {
+        ball.x += v.x * dt / steps
+        ball.y += v.y * dt / steps
+        if (paddle) {
+          const t = i / steps
+          const at = paddle.prev === paddle.world ? paddle.world
+            : paddle.world.map((q, j) => ({ x: paddle.prev[j].x + (q.x - paddle.prev[j].x) * t, y: paddle.prev[j].y + (q.y - paddle.prev[j].y) * t }))
+          if (this.collide({ world: at, cup: paddle.cup })) { this.held = true; break }
+        }
+        this.bounceOffWalls()
+        if (!this.hasBall) break // passed to another player
+      }
     }
     const speed = Math.hypot(v.x, v.y)
     if (speed > BALL.maxSpeed) { v.x *= BALL.maxSpeed / speed; v.y *= BALL.maxSpeed / speed }
@@ -243,7 +258,7 @@ class CourtScene extends Phaser.Scene {
 
   /** Ball vs. paddle. Returns true if the ball should now be held (closed hand). */
   collide({ world, cup }) {
-    const ball = this.ball, v = this.velocity, reach = BALL.radius + PADDLE.thickness / 2
+    const ball = this.ball, v = this.velocity, reach = BALL.radius + PADDLE.thickness / 2 + PADDLE.hitPad
     if (this.catching && Math.hypot(ball.x - cup.x, ball.y - cup.y) < CATCH_REACH) return true
     for (let i = 0; i < world.length - 1; i++) {
       const c = closestOnSegment(ball, world[i], world[i + 1])
