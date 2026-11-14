@@ -294,3 +294,24 @@ code {
     border-right-color: var(--border);
   }
 }
+#notes {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+.note {
+    position: absolute;
+    top: -60px;
+    height: auto;
+    animation: falling linear forwards;
+}
+@keyframes falling {
+    0% {
+        transform: translateY(0) rotate(0deg);
+    }
+
+    100% {
+        transform: translateY(110vh) rotate(var(--rotation));
+    }
+}
