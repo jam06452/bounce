@@ -3,6 +3,13 @@ import { net } from './net.js'
 import ballUrl from '../assets/textures/ball.png'
 import bgUrl from '../assets/textures/bg.png'
 import logUrl from '../assets/textures/log.png'
+import musicUrl from '../assets/audio/BBacking.wav'
+import bounce1Url from '../assets/audio/Bounce1.wav'
+import bounce2Url from '../assets/audio/Bounce2.wav'
+import bounce3Url from '../assets/audio/Bounce3.wav'
+import woosh1Url from '../assets/audio/Woosh1.wav'
+import woosh2Url from '../assets/audio/Woosh2.wav'
+import woosh3Url from '../assets/audio/Woosh3.wav'
 import { exitTarget, entryState } from './topology.js'
 
 const WIDTH = 800, HEIGHT = 450
@@ -48,6 +55,8 @@ function closestOnSegment(p, a, b) {
   return { x: a.x + abx * t, y: a.y + aby * t }
 }
 
+const BOUNCE_KEYS = ['bounce1', 'bounce2', 'bounce3'], WOOSH_KEYS = ['woosh1', 'woosh2', 'woosh3']
+
 const LOG_HEIGHT = 34 // drawn thickness of the log (collision still uses PADDLE.thickness)
 
 class CourtScene extends Phaser.Scene {
@@ -55,9 +64,18 @@ class CourtScene extends Phaser.Scene {
     this.load.image('bg', bgUrl)
     this.load.image('ball', ballUrl)
     this.load.image('log', logUrl)
+    this.load.audio('music', musicUrl)
+    BOUNCE_KEYS.forEach((k, i) => this.load.audio(k, [bounce1Url, bounce2Url, bounce3Url][i]))
+    WOOSH_KEYS.forEach((k, i) => this.load.audio(k, [woosh1Url, woosh2Url, woosh3Url][i]))
+  }
+
+  sfx(keys, volume = 0.8) {
+    this.sound.play(Phaser.Utils.Array.GetRandom(keys), { volume })
   }
 
   create() {
+    // Phaser holds playback until the browser's first user gesture, then starts it.
+    this.sound.play('music', { loop: true, volume: 0.5 })
     this.add.image(WIDTH / 2, HEIGHT / 2, 'bg').setDisplaySize(WIDTH, HEIGHT)
     // Slice the log texture so it can bend along the paddle's curve.
     const logTex = this.textures.get('log'), src = logTex.getSourceImage()
@@ -205,6 +223,7 @@ class CourtScene extends Phaser.Scene {
       // Fist opened (or hand lost): release, carrying the paddle's motion.
       this.held = false
       if (paddle) { v.x = this.paddleVelocity.x; v.y = this.paddleVelocity.y }
+      this.sfx(WOOSH_KEYS)
     }
     if (this.held) {
       const k = 1 - Math.exp(-30 * dt)
@@ -234,6 +253,7 @@ class CourtScene extends Phaser.Scene {
       const nx = dist > 1e-6 ? dx / dist : 0, ny = dist > 1e-6 ? dy / dist : -1
       ball.x = c.x + nx * reach; ball.y = c.y + ny * reach // push out of the paddle
       const rel = (v.x - this.paddleVelocity.x) * nx + (v.y - this.paddleVelocity.y) * ny
+      if (rel < -60) this.sfx(BOUNCE_KEYS, Math.min(1, 0.4 + -rel / 800))
       if (rel < 0) { v.x -= (1 + BALL.paddleBounce) * rel * nx; v.y -= (1 + BALL.paddleBounce) * rel * ny }
       return false
     }
