@@ -1,21 +1,39 @@
+body {
+    background-image: url("assets\textures\drive-download-20261114T153436Z-1-001\Screenshot_20261114_142711_Clip Studio.jpg");
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+}
+html, body {
+    min-height: 100%;
+    margin: 0;
+}
+
+body {
+    min-height: 100vh;
+}
 #notes {
     position: fixed;
     inset: 0;
     overflow: hidden;
     pointer-events: none;
+    z-index: 1000;
 }
+
 .note {
     position: absolute;
     top: -60px;
     height: auto;
     animation: falling linear forwards;
 }
+
 @keyframes falling {
-    0% {
+    from {
         transform: translateY(0) rotate(0deg);
     }
 
-    100% {
+    to {
         transform: translateY(110vh) rotate(var(--rotation));
     }
 }
