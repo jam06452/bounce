@@ -24,13 +24,14 @@ function newCode() {
 // the client falls back to STUN only.
 async function turnCredentials(request, env) {
   const none = (reason) => Response.json({ iceServers: [], reason })
-  if (!env.TURN_KEY_ID) return none('TURN_KEY_ID not set on this Worker')
+  const keyId = env.TURN_KEY_ID ?? env.TURN_TOKEN_ID // accept the common misnaming too
+  if (!keyId) return none('TURN_KEY_ID not set on this Worker')
   if (!env.TURN_KEY_API_TOKEN) return none('TURN_KEY_API_TOKEN not set on this Worker')
   const allowed = (env.ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean)
   const origin = request.headers.get('Origin')
   if (allowed.length && origin && !allowed.includes(origin)) return new Response('Forbidden', { status: 403 })
   try {
-    const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
+    const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${keyId}/credentials/generate-ice-servers`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ ttl: 86400 }),
