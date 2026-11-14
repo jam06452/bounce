@@ -20,5 +20,7 @@ and throw it to your friends if you have them!!
 
 
 art and background (including leavees) by aanya    
+
 hand tracking by Dan
+
 Music and file conversion by oliver
