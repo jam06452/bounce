@@ -20,8 +20,14 @@ const ICE_SERVERS = [
   // Strict NATs (many mobile/corporate networks) can't connect directly and need a relay.
   ...(turn ? [{ urls: turn, username: import.meta.env.VITE_TURN_USERNAME, credential: import.meta.env.VITE_TURN_CREDENTIAL }] : []),
 ]
-const signalingUrl = () => import.meta.env.VITE_SIGNALING_URL ||
-  `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/signal`
+// Joining puts the room code in the URL: the Cloudflare relay needs it to pick
+// the right room before any message is sent. The Node relay just ignores it.
+const signalingUrl = (joinCode) => {
+  const url = new URL(import.meta.env.VITE_SIGNALING_URL ||
+    `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/signal`)
+  if (joinCode) url.searchParams.set('code', joinCode)
+  return url.toString()
+}
 
 const ERRORS = {
   'no-such-room': 'No room with that code.',
@@ -57,12 +63,14 @@ export function createNet() {
   }
   function fail(message) { teardown(); setState('error', message) }
 
-  function openSocket() {
+  function openSocket(joinCode) {
     return new Promise((resolve, reject) => {
       let ws
-      try { ws = new WebSocket(signalingUrl()) } catch { return reject(new Error('Bad signaling URL.')) }
+      const url = signalingUrl(joinCode), where = new URL(url).host
+      try { ws = new WebSocket(url) } catch { return reject(new Error(`Bad signaling URL (${url}).`)) }
       ws.onopen = () => resolve(ws)
-      ws.onerror = () => reject(new Error('Cannot reach the signaling server.'))
+      // The browser doesn't say why (wrong address, blocked origin, server down), so name the address it tried.
+      ws.onerror = () => reject(new Error(`Cannot reach the signaling server at ${where}.`))
     })
   }
 
@@ -71,7 +79,7 @@ export function createNet() {
     const mine = session
     setState('connecting')
     try {
-      const ws = await openSocket()
+      const ws = await openSocket(firstMessage.code)
       if (mine !== session) return ws.close()
       socket = ws
       ws.onmessage = (e) => handleSignaling(e.data)

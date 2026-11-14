@@ -1,0 +1,22 @@
+# Room-code signaling relay for Cloudflare. Pages serves the game; this Worker
+# runs the WebSocket relay (one Durable Object per room code).
+#
+#   cd worker && npx wrangler deploy
+#
+# Then set VITE_SIGNALING_URL=wss://<this worker's URL>/signal as a build
+# variable in the Pages project, and ALLOWED_ORIGINS below to your Pages URL.
+name = "back-to-the-bounce-relay"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+# Comma-separated list, e.g. "https://back-to-the-bounce.pages.dev". Empty = any site may use this relay.
+ALLOWED_ORIGINS = ""
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"] # SQLite-backed Durable Objects are the ones available on the free plan
