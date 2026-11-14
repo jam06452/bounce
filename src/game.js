@@ -1,5 +1,15 @@
 import Phaser from 'phaser'
 import { net } from './net.js'
+import ballUrl from '../assets/textures/ball.png'
+import bgUrl from '../assets/textures/bg.png'
+import logUrl from '../assets/textures/log.png'
+import musicUrl from '../assets/audio/BBacking.wav'
+import bounce1Url from '../assets/audio/Bounce1.wav'
+import bounce2Url from '../assets/audio/Bounce2.wav'
+import bounce3Url from '../assets/audio/Bounce3.wav'
+import woosh1Url from '../assets/audio/Woosh1.wav'
+import woosh2Url from '../assets/audio/Woosh2.wav'
+import woosh3Url from '../assets/audio/Woosh3.wav'
 import { exitTarget, entryState } from './topology.js'
 
 const WIDTH = 800, HEIGHT = 450
@@ -45,16 +55,42 @@ function closestOnSegment(p, a, b) {
   return { x: a.x + abx * t, y: a.y + aby * t }
 }
 
+const BOUNCE_KEYS = ['bounce1', 'bounce2', 'bounce3'], WOOSH_KEYS = ['woosh1', 'woosh2', 'woosh3']
+
+const LOG_HEIGHT = 34 // drawn thickness of the log (collision still uses PADDLE.thickness)
+
 class CourtScene extends Phaser.Scene {
+  preload() {
+    this.load.image('bg', bgUrl)
+    this.load.image('ball', ballUrl)
+    this.load.image('log', logUrl)
+    this.load.audio('music', musicUrl)
+    BOUNCE_KEYS.forEach((k, i) => this.load.audio(k, [bounce1Url, bounce2Url, bounce3Url][i]))
+    WOOSH_KEYS.forEach((k, i) => this.load.audio(k, [woosh1Url, woosh2Url, woosh3Url][i]))
+  }
+
+  sfx(keys, volume = 0.8) {
+    this.sound.play(Phaser.Utils.Array.GetRandom(keys), { volume })
+  }
+
   create() {
+    // Phaser holds playback until the browser's first user gesture, then starts it.
+    this.sound.play('music', { loop: true, volume: 0.5 })
+    this.add.image(WIDTH / 2, HEIGHT / 2, 'bg').setDisplaySize(WIDTH, HEIGHT)
+    // Slice the log texture so it can bend along the paddle's curve.
+    const logTex = this.textures.get('log'), src = logTex.getSourceImage()
+    for (let i = 0; i < SEGMENTS; i++) {
+      logTex.add(`s${i}`, 0, Math.floor(i * src.width / SEGMENTS), 0, Math.ceil(src.width / SEGMENTS) + 1, src.height)
+    }
+    this.logSprites = Array.from({ length: SEGMENTS }, (_, i) => this.add.image(0, 0, 'log', `s${i}`).setVisible(false))
     this.target = null
     this.targetTime = 0
     this.targetVelocity = { x: 0, y: 0 }
     this.catching = false
     this.curl = 0
     this.paddle = this.add.graphics()
-    this.ball = this.add.circle(0, 0, BALL.radius, 0xffb86b)
-    this.shine = this.add.circle(0, 0, BALL.radius * 0.3, 0xffe0b8)
+    this.ball = this.add.image(0, 0, 'ball')
+    this.ball.setDisplaySize(BALL.radius * 2.6, BALL.radius * 2.6 * this.ball.height / this.ball.width)
     this.held = false
     this.paddleVelocity = { x: 0, y: 0 }
     this.lastPaddle = null
@@ -110,7 +146,7 @@ class CourtScene extends Phaser.Scene {
 
   setHasBall(has) {
     this.hasBall = has
-    this.ball.setVisible(has); this.shine.setVisible(has)
+    this.ball.setVisible(has)
   }
 
   launch() {
@@ -135,6 +171,7 @@ class CourtScene extends Phaser.Scene {
   update(_time, delta) {
     const dt = Math.min(delta, 33) / 1000
     this.paddle.clear()
+    this.logSprites.forEach(l => l.setVisible(false))
     // Always ease back to flat when the hand is lost or opens.
     const goal = this.catching ? 1 : 0
     this.curl += (goal - this.curl) * (1 - Math.exp(-CATCH_SPEED * delta / 1000))
@@ -157,8 +194,12 @@ class CourtScene extends Phaser.Scene {
     const cy = Phaser.Math.Clamp(py * HEIGHT, -minY, HEIGHT - maxY)
 
     const world = points.map(p => ({ x: p.x + cx, y: p.y + cy }))
-    this.paddle.lineStyle(PADDLE.thickness, 0xffffff, 1)
-    this.paddle.strokePoints(world, false, false)
+    const segLen = PADDLE.length / SEGMENTS
+    this.logSprites.forEach((spr, i) => {
+      const a = world[i], b = world[i + 1]
+      spr.setPosition((a.x + b.x) / 2, (a.y + b.y) / 2).setRotation(Math.atan2(b.y - a.y, b.x - a.x))
+        .setDisplaySize(segLen + 1, LOG_HEIGHT).setVisible(true)
+    })
 
     // Paddle velocity (smoothed) so a moving paddle hits harder and a flick throws the ball.
     if (this.lastPaddle && dt > 0) {
@@ -182,6 +223,7 @@ class CourtScene extends Phaser.Scene {
       // Fist opened (or hand lost): release, carrying the paddle's motion.
       this.held = false
       if (paddle) { v.x = this.paddleVelocity.x; v.y = this.paddleVelocity.y }
+      this.sfx(WOOSH_KEYS)
     }
     if (this.held) {
       const k = 1 - Math.exp(-30 * dt)
@@ -197,7 +239,6 @@ class CourtScene extends Phaser.Scene {
     }
     const speed = Math.hypot(v.x, v.y)
     if (speed > BALL.maxSpeed) { v.x *= BALL.maxSpeed / speed; v.y *= BALL.maxSpeed / speed }
-    this.shine.setPosition(ball.x - BALL.radius * 0.35, ball.y - BALL.radius * 0.35)
   }
 
   /** Ball vs. paddle. Returns true if the ball should now be held (closed hand). */
@@ -212,6 +253,7 @@ class CourtScene extends Phaser.Scene {
       const nx = dist > 1e-6 ? dx / dist : 0, ny = dist > 1e-6 ? dy / dist : -1
       ball.x = c.x + nx * reach; ball.y = c.y + ny * reach // push out of the paddle
       const rel = (v.x - this.paddleVelocity.x) * nx + (v.y - this.paddleVelocity.y) * ny
+      if (rel < -60) this.sfx(BOUNCE_KEYS, Math.min(1, 0.4 + -rel / 800))
       if (rel < 0) { v.x -= (1 + BALL.paddleBounce) * rel * nx; v.y -= (1 + BALL.paddleBounce) * rel * ny }
       return false
     }

@@ -19,10 +19,31 @@ function newCode() {
   return Array.from(bytes, b => ALPHABET[b % ALPHABET.length]).join('') // 256 % 32 == 0: no modulo bias
 }
 
+// Mints short-lived Cloudflare TURN credentials so the relay secret never reaches the browser.
+// Needs secrets TURN_KEY_ID and TURN_KEY_API_TOKEN; without them we return no servers and
+// the client falls back to STUN only.
+async function turnCredentials(request, env) {
+  const none = () => Response.json({ iceServers: [] })
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return none()
+  const allowed = (env.ALLOWED_ORIGINS ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  const origin = request.headers.get('Origin')
+  if (allowed.length && origin && !allowed.includes(origin)) return new Response('Forbidden', { status: 403 })
+  try {
+    const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttl: 86400 }),
+    })
+    if (!res.ok) return none()
+    return new Response(res.body, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } })
+  } catch { return none() }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
     if (url.pathname === '/health') return new Response('ok')
+    if (url.pathname === '/turn') return turnCredentials(request, env)
     if (url.pathname !== '/signal') return new Response('Not found', { status: 404 })
     if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket', { status: 426 })
 

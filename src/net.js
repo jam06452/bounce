@@ -15,11 +15,23 @@
 //                            'message' → {channel, data, from}      'rtt' → ms (mean over peers)
 
 const turn = import.meta.env.VITE_TURN_URL
-const ICE_SERVERS = [
+const BASE_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   // Strict NATs (many mobile/corporate networks) can't connect directly and need a relay.
   ...(turn ? [{ urls: turn, username: import.meta.env.VITE_TURN_USERNAME, credential: import.meta.env.VITE_TURN_CREDENTIAL }] : []),
 ]
+let ICE_SERVERS = BASE_ICE_SERVERS
+// Ask the Worker for short-lived TURN credentials (Cloudflare TURN). Failure just means STUN only.
+async function loadIceServers() {
+  try {
+    const base = new URL(import.meta.env.VITE_SIGNALING_URL || `${location.protocol}//${location.host}/signal`)
+    base.protocol = base.protocol === 'wss:' ? 'https:' : base.protocol === 'ws:' ? 'http:' : base.protocol
+    base.pathname = '/turn'; base.search = ''
+    const res = await fetch(base, { signal: AbortSignal.timeout(3000) })
+    const { iceServers } = await res.json()
+    if (Array.isArray(iceServers) && iceServers.length) ICE_SERVERS = [...BASE_ICE_SERVERS, ...iceServers]
+  } catch { /* keep STUN-only */ }
+}
 // Joining puts the room code in the URL: the Cloudflare relay needs it to pick
 // the right room before any message is sent. The Node relay just ignores it.
 const signalingUrl = (joinCode) => {
@@ -79,6 +91,8 @@ export function createNet() {
     const mine = session
     setState('connecting')
     try {
+      await loadIceServers()
+      if (mine !== session) return
       const ws = await openSocket(firstMessage.code)
       if (mine !== session) return ws.close()
       socket = ws
