@@ -1,9 +1,11 @@
 body {
-    background-image: url("assets\textures\drive-download-20261114T153436Z-1-001\Screenshot_20261114_142711_Clip Studio.jpg");
-    background-size: cover;
-    background-position: center;
+    background-image: url("assets/textures/origionals/bg.jpg");
+    background-size: 100% auto;
+    background-position: center bottom;
     background-repeat: no-repeat;
-    background-attachment: fixed;
+    background-color: #000;
+    min-height: 100vh;
+    margin: 0;
 }
 html, body {
     min-height: 100%;
