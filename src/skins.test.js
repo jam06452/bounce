@@ -41,12 +41,28 @@ test("duplicate bonus covers every rarity and can never reach the first mileston
   assert.ok(Math.max(...Object.values(DUPLICATE_BONUS)) <= MAX_PENDING_BONUS);
 });
 
-test("legendary boxes can drop below legendary, other boxes keep their rarity", () => {
-  const seen = new Set([0, 0.3, 0.5, 0.69, 0.7, 0.99].map((r) => rollRarity("legendary", () => r)));
-  assert.deepEqual([...seen].sort(), ["epic", "legendary", "rare"]);
-  assert.equal(rollRarity("legendary", () => 0), "legendary");
-  for (const r of ["common", "uncommon", "rare", "epic"]) assert.equal(rollRarity(r, () => 0.5), r);
-  for (const [box, table] of Object.entries(DROP_TABLE)) {
-    for (const drop of Object.keys(table)) assert.ok(RARITIES.indexOf(drop) <= RARITIES.indexOf(box), `${box} -> ${drop}`);
+test("every box can drop every rarity, and better boxes skew higher", () => {
+  const odds = (box) => {
+    const row = DROP_TABLE[box], total = Object.values(row).reduce((a, b) => a + b, 0);
+    return RARITIES.map((r) => row[r] / total);
+  };
+  const expected = (box) => odds(box).reduce((sum, p, i) => sum + p * i, 0);
+  for (const box of RARITIES) {
+    assert.deepEqual(Object.keys(DROP_TABLE[box]).sort(), [...RARITIES].sort(), box);
+    assert.ok(odds(box).every((p) => p > 0), box);
+    assert.ok(Math.abs(odds(box).reduce((a, b) => a + b, 0) - 1) < 1e-9);
   }
+  for (let i = 1; i < RARITIES.length; i++) {
+    const lower = RARITIES[i - 1], higher = RARITIES[i];
+    assert.ok(expected(higher) > expected(lower), `${higher} box beats ${lower} box`);
+    assert.ok(odds(higher).at(-1) > odds(lower).at(-1), `${higher} box has better odds of legendary`);
+  }
+  assert.ok(Math.abs(odds("legendary").at(-1) - 0.1) < 1e-9);
+});
+
+test("rollRarity walks the table in rarity order", () => {
+  assert.equal(rollRarity("legendary", () => 0), "common");
+  assert.equal(rollRarity("legendary", () => 0.999), "legendary");
+  assert.equal(rollRarity("common", () => 0.5), "common");
+  assert.equal(rollRarity("mythic", () => 0.5), "mythic");
 });

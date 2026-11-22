@@ -10,11 +10,11 @@ export const DUPLICATE_BONUS = { common: 1, uncommon: 2, rare: 3, epic: 5, legen
 export const MAX_PENDING_BONUS = MILESTONES[0].threshold - 1;
 export const WELCOME_BOXES = { count: 5, threshold: MILESTONES[0].threshold };
 export const DROP_TABLE = {
-  common: { common: 1 },
-  uncommon: { uncommon: 1 },
-  rare: { rare: 1 },
-  epic: { epic: 1 },
-  legendary: { legendary: 30, epic: 40, rare: 30 }
+  common: { common: 70, uncommon: 20, rare: 7, epic: 2.5, legendary: 0.5 },
+  uncommon: { common: 40, uncommon: 38, rare: 16, epic: 5, legendary: 1 },
+  rare: { common: 20, uncommon: 30, rare: 36, epic: 11, legendary: 3 },
+  epic: { common: 10, uncommon: 20, rare: 32, epic: 32, legendary: 6 },
+  legendary: { common: 4, uncommon: 10, rare: 26, epic: 50, legendary: 10 }
 };
 export function rollRarity(boxRarity, random = Math.random) {
   const entries = Object.entries(DROP_TABLE[boxRarity] ?? {});
