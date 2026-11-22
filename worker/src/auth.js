@@ -1,6 +1,6 @@
 import * as oauth from "oauth4webapi";
 import { refreshDisplayName } from "./names.js";
-import { rarityOf, pickSkin, rollRarity, parseEquipped, skinById, SLOTS, DUPLICATE_BONUS, MAX_PENDING_BONUS, WELCOME_BOXES } from "../../src/skins.js";
+import { rarityOf, pickSkin, rollRarity, parseEquipped, skinById, SLOTS, DUPLICATE_BONUS, MAX_PENDING_BONUS, WELCOME_BOXES, isFeedWorthy } from "../../src/skins.js";
 const ISSUER = new URL("https://auth.hackclub.com");
 const SCOPE = "openid slack_id";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -106,7 +106,7 @@ export async function authenticate(request, env) {
   if (!match) return null;
   const tokenHash = await sha256hex(match[1]);
   const user = await env.DB.prepare(
-    "SELECT u.id, u.slack_id, u.equipped, u.pending_bonus FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?"
+    "SELECT u.id, u.slack_id, u.display_name, u.equipped, u.pending_bonus FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?"
   ).bind(tokenHash, Date.now()).first();
   return user ? { ...user, tokenHash } : null;
 }
@@ -135,7 +135,12 @@ async function me(request, env) {
     history: history.results.filter((r) => skinById(r.skin_id)).map((r) => ({ rarity: rarityOf(r.threshold), skin: r.skin_id, duplicate: !!r.duplicate, at: r.opened_at }))
   });
 }
-async function openBox(request, env) {
+function announceDrop(env, user, skin, duplicate) {
+  if (!env.FEED || !isFeedWorthy(skin.rarity)) return Promise.resolve();
+  const body = JSON.stringify({ type: "drop", slackId: user.slack_id, name: user.display_name ?? null, skin: skin.id, duplicate });
+  return env.FEED.get(env.FEED.idFromName("global")).fetch("https://feed/publish", { method: "POST", body }).catch((err) => console.error("feed publish failed", err?.message));
+}
+async function openBox(request, env, ctx) {
   const user = await authenticate(request, env);
   if (!user) return json(request, env, { error: "unauthorized" }, 401);
   const body = await request.json().catch(() => null);
@@ -157,6 +162,7 @@ async function openBox(request, env) {
     ).bind(MAX_PENDING_BONUS, pick.duplicate ? DUPLICATE_BONUS[pick.skin.rarity] ?? 0 : 0, user.id, id, now)
   ]);
   if (!claimed.results.length) return json(request, env, { error: "no-such-box" }, 404);
+  ctx.waitUntil(announceDrop(env, user, pick.skin, pick.duplicate));
   return json(request, env, { id, threshold, rarity, skin: pick.skin.id, duplicate: pick.duplicate, bonus: pick.duplicate ? DUPLICATE_BONUS[pick.skin.rarity] ?? 0 : 0 });
 }
 async function earnBox(request, env) {
@@ -314,7 +320,7 @@ export async function handleAuth(request, env, url, ctx) {
     if (pathname === "/api/leaderboard/me" && request.method === "GET") return await myRank(request, env, url);
     if (pathname === "/api/score" && request.method === "POST") return await score(request, env, ctx);
     if (pathname === "/api/box/earn" && request.method === "POST") return await earnBox(request, env);
-    if (pathname === "/api/box/open" && request.method === "POST") return await openBox(request, env);
+    if (pathname === "/api/box/open" && request.method === "POST") return await openBox(request, env, ctx);
     if (pathname === "/api/bonus/claim" && request.method === "POST") return await claimBonus(request, env);
     if (pathname === "/api/skins/seen" && request.method === "POST") return await markSeen(request, env);
     if (pathname === "/api/equip" && request.method === "POST") return await equip(request, env);

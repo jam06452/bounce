@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SKINS, MILESTONES, RARITIES, reachedMilestones, pickSkin, parseEquipped, rarityOf, rollRarity, DROP_TABLE, DUPLICATE_BONUS, MAX_PENDING_BONUS } from "./skins.js";
+import { SKINS, MILESTONES, RARITIES, reachedMilestones, pickSkin, parseEquipped, rarityOf, rollRarity, DROP_TABLE, isFeedWorthy, DUPLICATE_BONUS, MAX_PENDING_BONUS } from "./skins.js";
 
 test("milestones map to rarities in order", () => {
   assert.deepEqual(MILESTONES.map((m) => m.threshold), [25, 50, 100, 250, 500]);
@@ -65,4 +65,10 @@ test("rollRarity walks the table in rarity order", () => {
   assert.equal(rollRarity("legendary", () => 0.999), "legendary");
   assert.equal(rollRarity("common", () => 0.5), "common");
   assert.equal(rollRarity("mythic", () => 0.5), "mythic");
+});
+
+test("only epic and legendary drops are announced to the feed", () => {
+  assert.deepEqual(RARITIES.filter(isFeedWorthy), ["epic", "legendary"]);
+  assert.equal(isFeedWorthy("mythic"), false);
+  assert.equal(isFeedWorthy(undefined), false);
 });

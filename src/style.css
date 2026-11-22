@@ -1029,3 +1029,39 @@ button.link {
 .hist-row small { color: #b49b84; white-space: nowrap; }
 label.vol { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 label.vol input { flex: 1; accent-color: #ffb86b; }
+
+#feed {
+  position: fixed;
+  top: 64px;
+  right: 12px;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(320px, 90vw);
+  pointer-events: none;
+}
+.feed-item {
+  padding: 10px 14px;
+  background: #2b1d15;
+  border: 1px solid #e6d3bd30;
+  border-left: 4px solid var(--r, #d8d8d8);
+  border-radius: 6px;
+  color: #f6ead8;
+  font-size: 14px;
+  line-height: 1.35;
+  animation: feed-in 0.3s ease-out;
+}
+.feed-item span { color: var(--r); font-weight: 700; }
+.feed-item[data-rarity=common] { --r: #d8d8d8; }
+.feed-item[data-rarity=uncommon] { --r: #7fe08a; }
+.feed-item[data-rarity=rare] { --r: #6fb4ff; }
+.feed-item[data-rarity=epic] { --r: #c58bff; }
+.feed-item[data-rarity=legendary] { --r: #ffb347; box-shadow: 0 0 16px #ffb34755; }
+@keyframes feed-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feed-item { animation: none; }
+}

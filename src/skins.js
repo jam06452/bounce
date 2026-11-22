@@ -24,6 +24,8 @@ export function rollRarity(boxRarity, random = Math.random) {
   for (const [rarity, w] of entries) if ((r -= w) < 0) return rarity;
   return entries[entries.length - 1][0];
 }
+export const FEED_MIN_RARITY = "epic";
+export const isFeedWorthy = (rarity) => RARITIES.indexOf(rarity) >= RARITIES.indexOf(FEED_MIN_RARITY) && RARITIES.includes(rarity);
 export const rarityOf = (threshold) => MILESTONES.find((m) => m.threshold === threshold)?.rarity ?? null;
 
 export const SKINS = [

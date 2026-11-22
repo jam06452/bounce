@@ -10,6 +10,7 @@ import { SKINS, SLOTS, MILESTONES, RARITIES, skinById } from "./skins.js";
 import { volume, volumeEvents, setVolume } from "./volume.js";
 import { net } from "./net.js";
 import { auth } from "./auth.js";
+import { startFeed } from "./feed.js";
 const base = import.meta.env.BASE_URL;
 const PALM = [0, 5, 9, 13, 17];
 const mean = (pts, idx) => idx.reduce((m, i) => ({ x: m.x + pts[i].x / idx.length, y: m.y + pts[i].y / idx.length, z: m.z + pts[i].z / idx.length }), { x: 0, y: 0, z: 0 });
@@ -74,6 +75,7 @@ document.querySelector("#app").innerHTML = `
   <button id="bx-skip" hidden>Skip (Space)</button>
   <button id="bx-done" hidden>Close (Esc)</button>
 </div>
+<div id="feed" aria-live="polite"></div>
 <div id="toast" role="status" hidden></div>
 <aside id="lb" aria-label="Leaderboard">
   <div class="lb-title">LEADERBOARD</div>
@@ -724,6 +726,23 @@ async function refreshLoot() {
   } catch {
   }
 }
+const FEED_MAX = 4, FEED_MS = 6e3;
+function showDrop(drop) {
+  if (drop.slackId && drop.slackId === auth.user?.slackId) return;
+  const skin = skinById(drop.skin);
+  if (!skin) return;
+  const item = document.createElement("div");
+  item.className = "feed-item";
+  item.dataset.rarity = skin.rarity;
+  const who = Object.assign(document.createElement("b"), { textContent: typeof drop.name === "string" && drop.name ? drop.name.slice(0, 40) : "A player" });
+  const what = Object.assign(document.createElement("span"), { textContent: skin.name });
+  item.append(who, " unboxed ", what, ` (${skin.rarity} ${skin.slot})`);
+  const feed = $("#feed");
+  feed.append(item);
+  while (feed.children.length > FEED_MAX) feed.firstElementChild.remove();
+  setTimeout(() => item.remove(), FEED_MS);
+}
+startFeed(showDrop);
 let toastTimer;
 function toast(message) {
   $("#toast").textContent = message;

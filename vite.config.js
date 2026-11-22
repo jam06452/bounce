@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
-    proxy: { '/signal': worker, '/turn': worker, '/auth': worker, '/api': worker },
+    proxy: { '/signal': worker, '/feed': worker, '/turn': worker, '/auth': worker, '/api': worker },
   },
   worker: { format: 'iife' },
   preview: { host: true, port: 4173 },

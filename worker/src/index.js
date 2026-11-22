@@ -1,4 +1,5 @@
 import { handleAuth } from "./auth.js";
+export { Feed } from "./feed.js";
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_RE = /^[A-HJ-NP-Z2-9]{4}$/;
 const SIZES = [2, 4];
@@ -36,6 +37,12 @@ export default {
     if (url.pathname === "/turn") return turnCredentials(request, env);
     const authResponse = await handleAuth(request, env, url, ctx);
     if (authResponse) return authResponse;
+    if (url.pathname === "/feed") {
+      if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
+      const allowedFeed = (env.ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      if (allowedFeed.length && !allowedFeed.includes(request.headers.get("Origin"))) return new Response("Forbidden", { status: 403 });
+      return env.FEED.get(env.FEED.idFromName("global")).fetch(request);
+    }
     if (url.pathname !== "/signal") return new Response("Not found", { status: 404 });
     if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
     const allowed = (env.ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
