@@ -29,3 +29,7 @@ migrations_dir = "migrations"
 [[kv_namespaces]]
 binding = "BOARD"
 id = "822fc3cc6b1c4bdca2589c0ab31df364"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
