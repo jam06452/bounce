@@ -6,7 +6,7 @@ const BASE_ICE_SERVERS = [
 let ICE_SERVERS = BASE_ICE_SERVERS;
 async function loadIceServers() {
   try {
-    const base = new URL(import.meta.env.VITE_SIGNALING_URL || `${location.protocol}
+    const base = new URL(import.meta.env.VITE_SIGNALING_URL || `${location.protocol}//${location.host}/signal`);
     base.protocol = base.protocol === "wss:" ? "https:" : base.protocol === "ws:" ? "http:" : base.protocol;
     base.pathname = "/turn";
     base.search = "";

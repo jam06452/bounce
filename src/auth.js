@@ -22,7 +22,7 @@ async function loadProfile(slackId) {
     const res = await fetch(`https://cachet.dunkirk.sh/users/${encodeURIComponent(slackId)}`, { signal: AbortSignal.timeout(4e3) });
     const data = res.ok ? await res.json() : null;
     if (data && res.status === 200 && typeof data.displayName === "string" && data.displayName) {
-      profile = { name: data.displayName, image: /^https:\/\
+      profile = { name: data.displayName, image: /^https:\/\//.test(data.imageUrl) ? data.imageUrl : null };
     }
   } catch {
   }
