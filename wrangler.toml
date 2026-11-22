@@ -1,7 +1,7 @@
 name = "bounce"
 main = "worker/src/index.js"
 compatibility_date = "2025-09-01"
-workers_dev = true  # also reachable at bounce.<your-subdomain>.workers.dev
+workers_dev = true
 preview_urls = false
 
 [assets]
@@ -18,7 +18,7 @@ class_name = "Room"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["Room"] # SQLite-backed Durable Objects are the ones available on the free plan
+new_sqlite_classes = ["Room"]
 
 [[d1_databases]]
 binding = "DB"
@@ -26,7 +26,6 @@ database_name = "bounce"
 database_id = "b481e550-2a1f-497a-b032-c6fa25445c48"
 migrations_dir = "migrations"
 
-# Caches the top-10 boards. Create with `npx wrangler kv namespace create BOARD`, then paste the printed id here.
 [[kv_namespaces]]
 binding = "BOARD"
-id = "00000000000000000000000000000000"
+id = "822fc3cc6b1c4bdca2589c0ab31df364"
