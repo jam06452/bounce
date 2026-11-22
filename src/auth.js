@@ -66,7 +66,7 @@ export const auth = {
         session = { token: e.data.token, expiresAt: e.data.expiresAt, user: e.data.user };
         persist();
         changed();
-        finish(resolve, session.user);
+        finish(resolve, { ...session.user, welcome: Number(e.data.welcome) || 0 });
       };
       addEventListener("message", onMessage);
       const watch = setInterval(() => {

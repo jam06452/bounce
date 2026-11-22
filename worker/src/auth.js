@@ -1,4 +1,5 @@
 import * as oauth from "oauth4webapi";
+import { rarityOf, pickSkin, parseEquipped, skinById, SLOTS, DUPLICATE_BONUS, MAX_PENDING_BONUS, WELCOME_BOXES } from "../../src/skins.js";
 const ISSUER = new URL("https://auth.hackclub.com");
 const SCOPE = "openid slack_id";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -84,14 +85,16 @@ async function callback(request, env, url) {
     if (typeof slackId !== "string" || !slackId || slackId.length > 64) return handoff(attempt.origin, { error: "no-slack-id" });
     const now = Date.now();
     const user = await env.DB.prepare(
-      "INSERT INTO users (sub, slack_id, created_at) VALUES (?, ?, ?) ON CONFLICT(sub) DO UPDATE SET slack_id = excluded.slack_id RETURNING id, slack_id"
+      "INSERT INTO users (sub, slack_id, created_at, welcomed) VALUES (?, ?, ?, 0) ON CONFLICT(sub) DO UPDATE SET slack_id = excluded.slack_id RETURNING id, slack_id"
     ).bind(claims.sub, slackId, now).first();
     const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
-    await env.DB.batch([
-      env.DB.prepare("INSERT OR IGNORE INTO boxes (user_id, count) VALUES (?, 0)").bind(user.id),
+    const copies = Array.from({ length: WELCOME_BOXES.count }, (_, i) => `SELECT ${i + 1}`).join(" UNION ALL ");
+    const [welcome] = await env.DB.batch([
+      env.DB.prepare(`INSERT INTO box_awards (user_id, threshold, awarded_at) SELECT u.id, ?2, ?3 FROM users u, (${copies}) WHERE u.id = ?1 AND u.welcomed = 0`).bind(user.id, WELCOME_BOXES.threshold, now),
+      env.DB.prepare("UPDATE users SET welcomed = 1 WHERE id = ? AND welcomed = 0").bind(user.id),
       env.DB.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)").bind(await sha256hex(token), user.id, now + SESSION_TTL_MS)
     ]);
-    return handoff(attempt.origin, { token, expiresAt: now + SESSION_TTL_MS, user: { slackId: user.slack_id } });
+    return handoff(attempt.origin, { token, expiresAt: now + SESSION_TTL_MS, user: { slackId: user.slack_id }, welcome: welcome.meta?.changes ?? 0 });
   } catch (err) {
     console.error("auth callback failed", err?.name, err?.message);
     return handoff(attempt.origin, { error: "auth-failed" });
@@ -102,27 +105,104 @@ export async function authenticate(request, env) {
   if (!match) return null;
   const tokenHash = await sha256hex(match[1]);
   const user = await env.DB.prepare(
-    "SELECT u.id, u.slack_id, u.equipped FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?"
+    "SELECT u.id, u.slack_id, u.equipped, u.pending_bonus FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?"
   ).bind(tokenHash, Date.now()).first();
   return user ? { ...user, tokenHash } : null;
 }
+const HISTORY_SIZE = 10;
 async function me(request, env) {
   const user = await authenticate(request, env);
   if (!user) return json(request, env, { error: "unauthorized" }, 401);
-  const [boxes, skins, scores] = await env.DB.batch([
-    env.DB.prepare("SELECT count FROM boxes WHERE user_id = ?").bind(user.id),
-    env.DB.prepare("SELECT skin_id FROM inventory WHERE user_id = ? ORDER BY acquired_at").bind(user.id),
-    env.DB.prepare("SELECT mode, best_rally FROM scores WHERE user_id = ?").bind(user.id)
+  const [boxes, skins, scores, history] = await env.DB.batch([
+    env.DB.prepare("SELECT id, threshold FROM box_awards WHERE user_id = ? AND opened_at IS NULL ORDER BY threshold, id").bind(user.id),
+    env.DB.prepare("SELECT skin_id, seen FROM inventory WHERE user_id = ? ORDER BY acquired_at").bind(user.id),
+    env.DB.prepare("SELECT mode, best_rally FROM scores WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("SELECT threshold, skin_id, duplicate, opened_at FROM box_awards WHERE user_id = ? AND opened_at IS NOT NULL ORDER BY opened_at DESC, id DESC LIMIT ?").bind(user.id, HISTORY_SIZE)
   ]);
+  const known = skins.results.filter((r) => skinById(r.skin_id));
+  const owned = known.map((r) => r.skin_id);
+  const equipped = parseEquipped(user.equipped);
+  for (const slot of SLOTS) if (!owned.includes(equipped[slot])) equipped[slot] = null;
   return json(request, env, {
     slackId: user.slack_id,
-    equipped: user.equipped,
+    equipped,
     bests: Object.fromEntries(scores.results.map((r) => [r.mode, r.best_rally])),
-    boxes: boxes.results[0]?.count ?? 0,
-    skins: skins.results.map((r) => r.skin_id)
+    boxes: boxes.results.map((r) => ({ id: r.id, threshold: r.threshold, rarity: rarityOf(r.threshold) })),
+    skins: owned,
+    fresh: known.filter((r) => !r.seen).map((r) => r.skin_id),
+    bonus: Math.min(MAX_PENDING_BONUS, user.pending_bonus ?? 0),
+    history: history.results.filter((r) => skinById(r.skin_id)).map((r) => ({ rarity: rarityOf(r.threshold), skin: r.skin_id, duplicate: !!r.duplicate, at: r.opened_at }))
   });
 }
+async function openBox(request, env) {
+  const user = await authenticate(request, env);
+  if (!user) return json(request, env, { error: "unauthorized" }, 401);
+  const body = await request.json().catch(() => null);
+  const id = body?.id;
+  if (!Number.isInteger(id)) return json(request, env, { error: "bad-box" }, 400);
+  const box = await env.DB.prepare("SELECT threshold FROM box_awards WHERE id = ? AND user_id = ? AND opened_at IS NULL").bind(id, user.id).first();
+  if (!box) return json(request, env, { error: "no-such-box" }, 404);
+  const threshold = box.threshold, rarity = rarityOf(threshold);
+  const { results } = await env.DB.prepare("SELECT skin_id FROM inventory WHERE user_id = ?").bind(user.id).all();
+  const pick = pickSkin(rarity, new Set(results.map((r) => r.skin_id)));
+  const now = Date.now();
+  const [claimed] = await env.DB.batch([
+    env.DB.prepare("UPDATE box_awards SET opened_at = ?, skin_id = ?, duplicate = ? WHERE id = ? AND user_id = ? AND opened_at IS NULL RETURNING id").bind(now, pick.skin.id, pick.duplicate ? 1 : 0, id, user.id),
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO inventory (user_id, skin_id, acquired_at, seen) SELECT ?1, ?2, ?3, 0 WHERE EXISTS (SELECT 1 FROM box_awards WHERE id = ?4 AND user_id = ?1 AND skin_id = ?2 AND opened_at = ?3)"
+    ).bind(user.id, pick.skin.id, now, id),
+    env.DB.prepare(
+      "UPDATE users SET pending_bonus = MIN(?1, pending_bonus + ?2) WHERE id = ?3 AND ?2 > 0 AND EXISTS (SELECT 1 FROM box_awards WHERE id = ?4 AND user_id = ?3 AND opened_at = ?5)"
+    ).bind(MAX_PENDING_BONUS, pick.duplicate ? DUPLICATE_BONUS[rarity] ?? 0 : 0, user.id, id, now)
+  ]);
+  if (!claimed.results.length) return json(request, env, { error: "no-such-box" }, 404);
+  return json(request, env, { id, threshold, rarity, skin: pick.skin.id, duplicate: pick.duplicate, bonus: pick.duplicate ? DUPLICATE_BONUS[rarity] ?? 0 : 0 });
+}
+async function earnBox(request, env) {
+  const user = await authenticate(request, env);
+  if (!user) return json(request, env, { error: "unauthorized" }, 401);
+  const body = await request.json().catch(() => null);
+  const threshold = body?.threshold, rarity = rarityOf(threshold);
+  if (!rarity) return json(request, env, { error: "bad-box" }, 400);
+  const now = Date.now(), last = await env.DB.prepare("SELECT MAX(awarded_at) AS at FROM box_awards WHERE user_id = ? AND threshold = ?").bind(user.id, threshold).first();
+  if (last?.at && now - last.at < MIN_EARN_GAP_MS) return json(request, env, { error: "too-fast" }, 429);
+  if (Number.isInteger(body.upgrade)) {
+    const up = await env.DB.prepare("UPDATE box_awards SET threshold = ?1, awarded_at = ?2 WHERE id = ?3 AND user_id = ?4 AND opened_at IS NULL AND threshold < ?1 RETURNING id").bind(threshold, now, body.upgrade, user.id).first();
+    if (up) return json(request, env, { box: { id: up.id, threshold, rarity }, upgraded: true });
+  }
+  const { meta } = await env.DB.prepare("INSERT INTO box_awards (user_id, threshold, awarded_at) VALUES (?, ?, ?)").bind(user.id, threshold, now).run();
+  return json(request, env, { box: { id: meta.last_row_id, threshold, rarity } });
+}
+async function claimBonus(request, env) {
+  const user = await authenticate(request, env);
+  if (!user) return json(request, env, { error: "unauthorized" }, 401);
+  const n = Math.min(MAX_PENDING_BONUS, user.pending_bonus ?? 0);
+  if (n <= 0) return json(request, env, { bonus: 0 });
+  const won = await env.DB.prepare("UPDATE users SET pending_bonus = pending_bonus - ?1 WHERE id = ?2 AND pending_bonus >= ?1 RETURNING id").bind(n, user.id).first();
+  return json(request, env, { bonus: won ? n : 0 });
+}
+async function markSeen(request, env) {
+  const user = await authenticate(request, env);
+  if (!user) return json(request, env, { error: "unauthorized" }, 401);
+  await env.DB.prepare("UPDATE inventory SET seen = 1 WHERE user_id = ? AND seen = 0").bind(user.id).run();
+  return json(request, env, { ok: true });
+}
+async function equip(request, env) {
+  const user = await authenticate(request, env);
+  if (!user) return json(request, env, { error: "unauthorized" }, 401);
+  const body = await request.json().catch(() => null);
+  const slot = body?.slot, id = body?.skin ?? null;
+  if (!SLOTS.includes(slot) || id !== null && skinById(id)?.slot !== slot) return json(request, env, { error: "bad-skin" }, 400);
+  if (id !== null) {
+    const has = await env.DB.prepare("SELECT 1 AS ok FROM inventory WHERE user_id = ? AND skin_id = ?").bind(user.id, id).first();
+    if (!has) return json(request, env, { error: "not-owned" }, 403);
+  }
+  const equipped = { ...parseEquipped(user.equipped), [slot]: id };
+  await env.DB.prepare("UPDATE users SET equipped = ? WHERE id = ?").bind(JSON.stringify(equipped), user.id).run();
+  return json(request, env, { equipped });
+}
 const MAX_RALLY = 9999;
+const MIN_EARN_GAP_MS = 10 * 1e3;
 const MODES = [1, 2, 4];
 const BOARD_SIZE = 10;
 const SLACK_ID = /^[A-Z0-9]{3,32}$/;
@@ -232,6 +312,11 @@ export async function handleAuth(request, env, url, ctx) {
     if (pathname === "/api/leaderboard" && request.method === "GET") return await leaderboard(request, env, url);
     if (pathname === "/api/leaderboard/me" && request.method === "GET") return await myRank(request, env, url);
     if (pathname === "/api/score" && request.method === "POST") return await score(request, env, ctx);
+    if (pathname === "/api/box/earn" && request.method === "POST") return await earnBox(request, env);
+    if (pathname === "/api/box/open" && request.method === "POST") return await openBox(request, env);
+    if (pathname === "/api/bonus/claim" && request.method === "POST") return await claimBonus(request, env);
+    if (pathname === "/api/skins/seen" && request.method === "POST") return await markSeen(request, env);
+    if (pathname === "/api/equip" && request.method === "POST") return await equip(request, env);
   } catch (err) {
     console.error("auth route failed", pathname, err?.message);
     return json(request, env, { error: "server-error" }, 500);

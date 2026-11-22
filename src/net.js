@@ -16,9 +16,11 @@ async function loadIceServers() {
   } catch {
   }
 }
-const signalingUrl = (joinCode) => {
+const signalingUrl = ({ code: joinCode, quick, stale } = {}) => {
   const url = new URL(import.meta.env.VITE_SIGNALING_URL || `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/signal`);
   if (joinCode) url.searchParams.set("code", joinCode);
+  if (quick) url.searchParams.set("quick", quick);
+  if (stale) url.searchParams.set("stale", stale);
   return url.toString();
 };
 const ERRORS = {
@@ -58,14 +60,20 @@ export function createNet() {
     socket = null;
     for (const seat of [...peers.keys()]) closePeer(seat);
   }
+  function requeue(deadCode) {
+    if (!quickSize || quickTries >= QUICK_RETRIES) return false;
+    quickTries++;
+    connect("quick", { type: "quick", size: quickSize }, { quick: quickSize, stale: deadCode });
+    return true;
+  }
   function fail(message) {
     teardown();
     setState("error", message);
   }
-  function openSocket(joinCode) {
+  function openSocket(query) {
     return new Promise((resolve, reject) => {
       let ws;
-      const url = signalingUrl(joinCode), where = new URL(url).host;
+      const url = signalingUrl(query), where = new URL(url).host;
       try {
         ws = new WebSocket(url);
       } catch {
@@ -75,7 +83,9 @@ export function createNet() {
       ws.onerror = () => reject(new Error(`Cannot reach the signaling server at ${where}.`));
     });
   }
-  async function connect(asRole, firstMessage) {
+  const QUICK_RETRIES = 3;
+  let quickSize = 0, quickTries = 0;
+  async function connect(asRole, firstMessage, query = { code: firstMessage.code }) {
     teardown();
     role = asRole;
     code = null;
@@ -86,7 +96,7 @@ export function createNet() {
     try {
       await loadIceServers();
       if (mine !== session) return;
-      const ws = await openSocket(firstMessage.code);
+      const ws = await openSocket(query);
       if (mine !== session) return ws.close();
       socket = ws;
       ws.onmessage = (e) => handleSignaling(e.data);
@@ -128,8 +138,10 @@ export function createNet() {
         players--;
         return setState("waiting");
       case "room-closed":
+        if (quickSize && requeue(code)) return;
         return fail("The host closed the room.");
       case "error":
+        if (quickSize && ["no-such-room", "room-full"].includes(message.reason) && requeue(message.code ?? code)) return;
         return fail(ERRORS[message.reason] ?? "Signaling error.");
     }
   }
@@ -238,9 +250,21 @@ export function createNet() {
     get size() {
       return size;
     },
-    host: (playerCount) => connect("host", { type: "create", size: playerCount }),
-    join: (roomCode) => connect("guest", { type: "join", code: roomCode }),
+    host: (playerCount) => {
+      quickSize = 0;
+      return connect("host", { type: "create", size: playerCount });
+    },
+    join: (roomCode) => {
+      quickSize = 0;
+      return connect("guest", { type: "join", code: roomCode });
+    },
+    quick: (playerCount) => {
+      quickSize = playerCount;
+      quickTries = 0;
+      return connect("quick", { type: "quick", size: playerCount }, { quick: playerCount });
+    },
     leave() {
+      quickSize = 0;
       teardown();
       role = code = null;
       size = players = 0;

@@ -16,9 +16,17 @@ ALLOWED_ORIGINS = "https://bounce.jam06452.uk,https://bounce.danjward8.workers.d
 name = "ROOMS"
 class_name = "Room"
 
+[[durable_objects.bindings]]
+name = "MATCHMAKER"
+class_name = "Matchmaker"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Matchmaker"]
 
 [[d1_databases]]
 binding = "DB"

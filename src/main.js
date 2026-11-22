@@ -1,7 +1,13 @@
 import "./style.css";
 import { HandLandmarker, DrawingUtils } from "@mediapipe/tasks-vision";
 import { LandmarkFilter } from "./trackingFilter.js";
-import { createGame, loadBest, saveBest, MODES } from "./game.js";
+import bgUrl from "../assets/textures/bg.png";
+import caseClipUrl from "../assets/audio/CaseOpen.mp3";
+import ballUrl from "../assets/textures/ball.png";
+import logUrl from "../assets/textures/log.png";
+import { createGame, loadBest, saveBest, setEquippedSkins, setPendingBonus, setBonusClaimer, setMenuOpen, MODES } from "./game.js";
+import { SKINS, SLOTS, MILESTONES, RARITIES, skinById } from "./skins.js";
+import { volume, volumeEvents, setVolume } from "./volume.js";
 import { net } from "./net.js";
 import { auth } from "./auth.js";
 const base = import.meta.env.BASE_URL;
@@ -16,11 +22,15 @@ document.querySelector("#app").innerHTML = `
     <div class="menu-title">BACK TO<br>THE BOUNCE</div>
 
     <div class="host-row">
-      <button id="net-host2" class="primary">Host 2-player</button>
-      <button id="net-host4" class="primary">Host 4-player</button>
+      <button id="net-quick2" class="primary">Quick match 2-player</button>
+      <button id="net-quick4" class="primary">Quick match 4-player</button>
     </div>
 
-    <div class="menu-or">or join a friend</div>
+    <div class="menu-or">or play with friends</div>
+    <div class="host-row">
+      <button id="net-host2">Host 2-player</button>
+      <button id="net-host4">Host 4-player</button>
+    </div>
     <div class="net-row">
       <input id="net-code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Room code">
       <button id="net-join">Join</button>
@@ -33,11 +43,38 @@ document.querySelector("#app").innerHTML = `
 
     <div class="auth-row">
       <div id="auth-who" hidden><img id="auth-pfp" alt="" width="40" height="40"><span id="auth-name"></span></div>
+      <button id="locker-btn" hidden>Mystery boxes <b id="locker-count"></b></button>
       <button id="auth-btn">Sign in with Hack Club</button>
       <small id="auth-status" role="status"></small>
     </div>
   </div>
 </div>
+<div id="locker" role="dialog" aria-label="Mystery boxes and skins" hidden>
+  <div class="locker-card">
+    <button id="locker-close" aria-label="Close">\u00D7</button>
+    <div class="lb-title">MYSTERY BOXES</div>
+    <div id="locker-boxes"></div>
+    <small id="locker-reveal" role="status"></small>
+    <div id="locker-skins"></div>
+    <div id="locker-history"></div>
+    <small class="locker-hint">Reach a rally of ${MILESTONES.map((m) => m.threshold).join(", ")} to earn a box.</small>
+  </div>
+</div>
+<div id="box-stage" role="dialog" aria-label="Opening mystery box" hidden>
+  <header class="bx-head">
+    <h2>Unlock Container</h2>
+    <p class="bx-sub"></p>
+    <p class="bx-info"><span aria-hidden="true">i</span>This container can only be opened once</p>
+  </header>
+  <div class="bx-flash"></div>
+  <div class="bx-rays"></div>
+  <div class="bx-sparks"></div>
+  <div class="bx-view"><div class="bx-reel"></div><div class="bx-marker"></div></div>
+  <div class="bx-result"><div class="bx-rarity"></div><div class="bx-name"></div><div class="bx-dupe"></div></div>
+  <button id="bx-skip" hidden>Skip (Space)</button>
+  <button id="bx-done" hidden>Close (Esc)</button>
+</div>
+<div id="toast" role="status" hidden></div>
 <aside id="lb" aria-label="Leaderboard">
   <div class="lb-title">LEADERBOARD</div>
   <div id="lb-modes" role="tablist" aria-label="Game mode">
@@ -49,7 +86,7 @@ document.querySelector("#app").innerHTML = `
   <small id="lb-status" role="status"></small>
 </aside>
 <div class="workspace closed" id="panel" inert><section class="camera"><video autoplay muted playsinline></video><canvas></canvas><div class="placeholder"><span id="camera-message">Enable your webcam to start.</span><small id="camera-help">Use the Enable webcam button beside this preview.</small></div><span class="badge">LOCAL CAMERA \xB7 MIRRORED</span></section>
-<aside><div class="status" role="status">Camera off</div><h2 id="gesture">No hand</h2><p id="hint">Keep one hand visible, with your palm facing the camera.</p><dl><div><dt>Tracking rate</dt><dd id="fps">\u2014</dd></div><div><dt>Inference time</dt><dd id="latency">\u2014</dd></div><div><dt>Palm position</dt><dd id="position">\u2014</dd></div></dl><button id="start">Enable webcam \u2197</button><button id="stop" disabled>Stop camera</button><button id="fullscreen">Fullscreen \u26F6</button><label><input id="overlay" type="checkbox" checked> Show landmarks</label></aside></div>
+<aside><div class="status" role="status">Camera off</div><h2 id="gesture">No hand</h2><p id="hint">Keep one hand visible, with your palm facing the camera.</p><dl><div><dt>Tracking rate</dt><dd id="fps">\u2014</dd></div><div><dt>Inference time</dt><dd id="latency">\u2014</dd></div><div><dt>Palm position</dt><dd id="position">\u2014</dd></div></dl><button id="start">Enable webcam \u2197</button><button id="stop" disabled>Stop camera</button><button id="fullscreen">Fullscreen \u26F6</button><label><input id="overlay" type="checkbox" checked> Show landmarks</label><label class="vol">Music <input id="vol-music" type="range" min="0" max="100" step="1"></label><label class="vol">Effects <input id="vol-sfx" type="range" min="0" max="100" step="1"></label></aside></div>
 <section class="court" id="court"></section>
 <section class="instructions"><article><b>01 \xB7 MOVE</b><p>Move your hand to position the circular paddle.</p></article><article><b>02 \xB7 CATCH</b><p>Close your hand into a fist.</p></article><article><b>03 \xB7 BOUNCE</b><p>Open your hand and show your palm.</p></article></section><footer>Video stays on this laptop. Everything runs in your browser. Gesture controls are a prototype.</footer></main>`;
 const $ = (s) => document.querySelector(s);
@@ -273,7 +310,7 @@ const NET_TEXT = {
   connecting: () => "Connecting to server\u2026",
   negotiating: () => "Linking players\u2026",
   reconnecting: () => "Connection unstable\u2026",
-  waiting: ({ players, size }) => `${players} of ${size} players here. Waiting for the rest\u2026`,
+  waiting: ({ players, size, role }) => role === "quick" && players === 1 ? `Looking for players\u2026 (${players} of ${size})` : `${players} of ${size} players here. Waiting for the rest\u2026`,
   connected: ({ index, size }) => `Connected \xB7 player ${index + 1} of ${size}${rtt === null ? "" : ` \xB7 ${rtt.toFixed(0)} ms`}`,
   error: ({ message }) => message ?? "Connection failed."
 };
@@ -281,12 +318,13 @@ let netStatus = { state: "idle" }, menuOpen = true;
 let lbLast = 0, lbLoading = false, lbMode = 1;
 function renderNet() {
   const { state, code } = netStatus, busy2 = state !== "idle" && state !== "error";
+  setMenuOpen(menuOpen);
   $("#menu").hidden = !menuOpen;
   $("#lb").classList.toggle("shown", menuOpen);
   if (menuOpen && Date.now() - lbLast > 3e4) refreshLeaderboard();
   $("#net-status").textContent = NET_TEXT[state](netStatus);
   $("#net-status").classList.toggle("bad", state === "error");
-  $("#net-host2").disabled = $("#net-host4").disabled = $("#net-join").disabled = $("#net-code").disabled = busy2;
+  $("#net-quick2").disabled = $("#net-quick4").disabled = $("#net-host2").disabled = $("#net-host4").disabled = $("#net-join").disabled = $("#net-code").disabled = busy2;
   $("#net-leave").hidden = !busy2;
   $("#net-solo").hidden = busy2;
   $("#net-bigcode").hidden = !(state === "waiting" && code);
@@ -309,11 +347,14 @@ $("#net-chip").addEventListener("click", () => {
 $("#net-solo").addEventListener("click", () => {
   menuOpen = false;
   renderNet();
+  window.dispatchEvent(new Event("bounce:restart"));
 });
 net.events.addEventListener("rtt", (e) => {
   rtt = rtt === null ? e.detail : rtt * 0.7 + e.detail * 0.3;
   renderNet();
 });
+$("#net-quick2").addEventListener("click", () => net.quick(2));
+$("#net-quick4").addEventListener("click", () => net.quick(4));
 $("#net-host2").addEventListener("click", () => net.host(2));
 $("#net-host4").addEventListener("click", () => net.host(4));
 $("#net-join").addEventListener("click", () => {
@@ -325,6 +366,386 @@ $("#net-code").addEventListener("input", (e) => {
 });
 $("#net-leave").addEventListener("click", () => net.leave());
 renderNet();
+let loot = { boxes: [], skins: [], equipped: {}, fresh: [], history: [], bonus: 0 };
+const RARITY_LABEL = (r) => r[0].toUpperCase() + r.slice(1);
+function setLoot(next) {
+  loot = { boxes: next.boxes ?? [], skins: next.skins ?? [], equipped: next.equipped ?? {}, fresh: next.fresh ?? [], history: next.history ?? [], bonus: next.bonus ?? 0 };
+  setPendingBonus(loot.bonus);
+  setEquippedSkins(loot.equipped);
+  $("#locker-count").textContent = loot.boxes.length ? `(${loot.boxes.length})` : "";
+  $("#locker-btn").classList.toggle("has-boxes", loot.boxes.length > 0);
+  renderLocker();
+}
+function lootButton(text, rarity, onClick, pressed) {
+  const b = document.createElement("button");
+  b.textContent = text;
+  if (rarity) b.dataset.rarity = rarity;
+  if (pressed !== void 0) b.setAttribute("aria-pressed", String(pressed));
+  b.addEventListener("click", onClick);
+  return b;
+}
+function renderLocker() {
+  const boxes = loot.boxes.map((box) => lootButton(`${RARITY_LABEL(box.rarity)} box`, box.rarity, () => openBox(box.id)));
+  $("#locker-boxes").replaceChildren(...boxes.length ? boxes : [Object.assign(document.createElement("small"), { textContent: "No unopened boxes." })]);
+  const groups = SLOTS.map((slot) => {
+    const section = document.createElement("div");
+    const title = document.createElement("h3");
+    title.textContent = slot === "ball" ? "Ball" : "Paddle";
+    const equipped = loot.equipped[slot] ?? null;
+    const owned = SKINS.filter((sk) => sk.slot === slot && loot.skins.includes(sk.id));
+    section.append(title, lootButton("Default", null, () => equipSkin(slot, null), equipped === null), ...owned.map((sk) => {
+      const b = lootButton(sk.name, sk.rarity, () => equipSkin(slot, sk.id), equipped === sk.id);
+      if (loot.fresh.includes(sk.id)) b.classList.add("is-new");
+      return b;
+    }));
+    return section;
+  });
+  $("#locker-skins").replaceChildren(...groups);
+  renderHistory();
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)");
+const ART = { ball: { url: ballUrl }, paddle: { url: logUrl } };
+const artCache = new Map();
+const hex = (n) => "#" + n.toString(16).padStart(6, "0");
+const loadArt = () => Promise.all(Object.values(ART).map((a) => a.img ? 0 : new Promise((res) => {
+  a.img = new Image();
+  a.img.onload = a.img.onerror = res;
+  a.img.src = a.url;
+})));
+function skinArt(skin) {
+  if (artCache.has(skin.id)) return copyCanvas(artCache.get(skin.id));
+  const { img } = ART[skin.slot];
+  const w = img.naturalWidth || 1, h = img.naturalHeight || 1;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const g = c.getContext("2d");
+  g.drawImage(img, 0, 0);
+  if (skin.rainbow || skin.tint !== void 0) {
+    g.globalCompositeOperation = "multiply";
+    if (skin.rainbow) {
+      const grad = skin.slot === "paddle" ? g.createLinearGradient(0, 0, w, 0) : g.createLinearGradient(0, 0, w, h);
+      ["#ff6b6b", "#ffd24d", "#7fe08a", "#6fb4ff", "#c58bff"].forEach((col, i, all) => grad.addColorStop(i / (all.length - 1), col));
+      g.fillStyle = grad;
+    } else {
+      g.fillStyle = hex(skin.tint);
+    }
+    g.fillRect(0, 0, w, h);
+    g.globalCompositeOperation = "destination-in";
+    g.drawImage(img, 0, 0);
+  }
+  c.className = "bx-art";
+  c.dataset.slot = skin.slot;
+  if (skin.glow) c.style.filter = `drop-shadow(0 0 14px ${hex(skin.glow)})`;
+  artCache.set(skin.id, c);
+  return copyCanvas(c);
+}
+function copyCanvas(src) {
+  const c = src.cloneNode(false);
+  c.getContext("2d").drawImage(src, 0, 0);
+  return c;
+}
+const CLIP = {
+  lead: 1.25,
+  hit: 7.652,
+  skipTo: 7.4,
+  ticks: [1.399, 1.486, 1.561, 1.632, 1.701, 1.771, 1.841, 1.899, 2.015, 2.084, 2.171, 2.229, 2.289, 2.4, 2.486, 2.542, 2.614, 2.672, 2.741, 2.816, 2.876, 2.945, 3.028, 3.097, 3.184, 3.26, 3.329, 3.4, 3.468, 3.552, 3.62, 3.703, 3.866, 3.934, 3.993, 4.061, 4.167, 4.237, 4.332, 4.4, 4.494, 4.562, 4.726, 5.03, 5.308, 5.751, 6.414]
+};
+const REEL = { tile: 300, gap: 18, win: CLIP.ticks.length, len: CLIP.ticks.length + 9 };
+const REEL_TILE = REEL.tile, REEL_GAP = REEL.gap, REEL_WIN = REEL.win, REEL_LEN = REEL.len;
+function makeCurve(ts, us) {
+  const n = ts.length, h = [], d = [], m = new Array(n).fill(0);
+  for (let i = 0; i < n - 1; i++) {
+    h[i] = ts[i + 1] - ts[i];
+    d[i] = (us[i + 1] - us[i]) / h[i];
+  }
+  for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : 2 * d[i - 1] * d[i] / (d[i - 1] + d[i]);
+  return (t) => {
+    if (t <= ts[0]) return us[0];
+    if (t >= ts[n - 1]) return us[n - 1];
+    let i = 0;
+    while (ts[i + 1] < t) i++;
+    const x = (t - ts[i]) / h[i], x2 = x * x, x3 = x2 * x;
+    return (2 * x3 - 3 * x2 + 1) * us[i] + (x3 - 2 * x2 + x) * h[i] * m[i] + (-2 * x3 + 3 * x2) * us[i + 1] + (x3 - x2) * h[i] * m[i + 1];
+  };
+}
+let audioCtx;
+const ac = () => (audioCtx ??= new AudioContext());
+function blip({ freq, end = freq, type = "sine", gain = 0.08, dur = 0.1, delay = 0 }) {
+  try {
+    const c = ac(), t = c.currentTime + delay;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t);
+    o.frequency.exponentialRampToValueAtTime(end, t + dur);
+    g.gain.setValueAtTime(Math.max(0.0001, gain * volume.sfx), t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(c.destination);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  } catch {
+  }
+}
+const sfx = {
+  unlock() { try { ac().resume(); } catch {} },
+  reveal(rarity) {
+    const tier = RARITIES.indexOf(rarity);
+    if (tier >= 3) {
+      blip({ freq: 110, end: 40, type: "sine", gain: 0.3, dur: 0.7 });
+      for (let i = 0; i < 6; i++) blip({ freq: 2000 + Math.random() * 2500, type: "sine", gain: 0.025, dur: 0.3, delay: 0.2 + i * 0.07 });
+    }
+    if (tier >= 4) {
+      blip({ freq: 400, end: 2400, type: "sawtooth", gain: 0.04, dur: 0.9 });
+      [1047, 1319, 1568, 2093].forEach((f, i) => blip({ freq: f, type: "triangle", gain: 0.06, dur: 0.9, delay: 0.3 + i * 0.12 }));
+    }
+  }
+};
+function reelTile(skin) {
+  const t = document.createElement("div");
+  t.className = "bx-tile";
+  t.dataset.rarity = skin.rarity;
+  t.append(skinArt(skin));
+  return t;
+}
+function randomFiller() {
+  const weights = { common: 50, uncommon: 25, rare: 14, epic: 8, legendary: 3 };
+  let r = Math.random() * 100;
+  for (const sk of SKINS.slice().sort(() => Math.random() - 0.5)) if ((r -= weights[sk.rarity] / SKINS.filter((x) => x.rarity === sk.rarity).length) <= 0) return sk;
+  return SKINS[0];
+}
+const caseClip = { buf: null };
+async function loadClip() {
+  if (caseClip.buf !== null) return;
+  try {
+    const res = await fetch(caseClipUrl);
+    caseClip.buf = await ac().decodeAudioData(await res.arrayBuffer());
+  } catch {
+    caseClip.buf = false;
+  }
+}
+function createClip() {
+  const buf = caseClip.buf, c = buf ? ac() : null;
+  let src = null, gain = null, origin = 0;
+  const clock = () => c ? c.currentTime : performance.now() / 1e3;
+  const onVolume = () => { if (gain) gain.gain.value = volume.sfx; };
+  const halt = (fade) => {
+    if (!src) return;
+    const old = src;
+    src = null;
+    if (fade) gain.gain.setTargetAtTime(0, c.currentTime, 0.06);
+    try { old.stop(c.currentTime + (fade ? 0.35 : 0)); } catch {}
+  };
+  return {
+    now: () => clock() - origin - (c ? c.outputLatency || c.baseLatency || 0 : 0),
+    play(from = 0) {
+      origin = clock() - from;
+      if (!c) return;
+      halt(false);
+      gain = c.createGain();
+      gain.gain.value = volume.sfx;
+      gain.connect(c.destination);
+      src = c.createBufferSource();
+      src.buffer = buf;
+      src.connect(gain);
+      src.start(0, from);
+      volumeEvents.addEventListener("change", onVolume);
+    },
+    stop() {
+      volumeEvents.removeEventListener("change", onVolume);
+      halt(true);
+    }
+  };
+}
+function placeFlair(stage, view, rarity) {
+  const tier = RARITIES.indexOf(rarity);
+  const r = view.getBoundingClientRect(), at = `left:${r.left + r.width / 2}px;top:${r.top + r.height / 2}px`;
+  const sparks = stage.querySelector(".bx-sparks"), rays = stage.querySelector(".bx-rays");
+  sparks.style.cssText = rays.style.cssText = at;
+  const count = tier >= 4 ? 48 : tier === 3 ? 30 : 0;
+  sparks.replaceChildren(...Array.from({ length: count }, (_, i) => {
+    const sp = document.createElement("i");
+    const angle = i / count * Math.PI * 2 + Math.random() * 0.3, dist = 140 + Math.random() * 260;
+    sp.style.setProperty("--dx", `${Math.cos(angle) * dist}px`);
+    sp.style.setProperty("--dy", `${Math.sin(angle) * dist * 0.7}px`);
+    sp.style.setProperty("--d", `${Math.random() * 0.2}s`);
+    return sp;
+  }));
+}
+async function playBoxOpening(rarity, request) {
+  const stage = $("#box-stage"), reel = stage.querySelector(".bx-reel"), done = $("#bx-done"), skipBtn = $("#bx-skip");
+  let skipped = false, onSkip, clip;
+  const skip = new Promise((r) => onSkip = r);
+  const doSkip = () => { skipped = true; skipBtn.hidden = true; onSkip(); };
+  skipBtn.addEventListener("click", doSkip, { once: true });
+  const onKey = (e) => {
+    if (![" ", "Enter", "Escape"].includes(e.key)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.repeat) return;
+    if (!skipBtn.hidden) doSkip();
+    else if (!done.hidden) done.click();
+  };
+  window.addEventListener("keydown", onKey, true);
+  const quick = REDUCED_MOTION.matches;
+  sfx.unlock();
+  const music = game.sound?.get("music");
+  const pausedMusic = !!music?.isPlaying;
+  if (pausedMusic) music.pause();
+  stage.style.backgroundImage = `url(${bgUrl})`;
+  stage.dataset.phase = "wait";
+  stage.dataset.rarity = rarity;
+  stage.querySelector(".bx-sub").innerHTML = `Unlock <b>${RARITY_LABEL(rarity)} Mystery Box</b>`;
+  reel.style.transition = "none";
+  reel.style.transform = "translateX(0)";
+  reel.replaceChildren();
+  stage.hidden = false;
+  try {
+    const [res] = await Promise.all([request(), loadArt(), loadClip()]);
+    const skin = skinById(res.skin);
+    reel.replaceChildren(...Array.from({ length: REEL_LEN }, (_, i) => reelTile(i === REEL_WIN ? skin : randomFiller())));
+    const view = stage.querySelector(".bx-view");
+    const step = REEL_TILE + REEL_GAP;
+    const uEnd = REEL_WIN + 0.55 + Math.random() * 0.3;
+    const curve = makeCurve([CLIP.lead, ...CLIP.ticks, CLIP.hit], [0.45, ...CLIP.ticks.map((_, i) => i + 1), uEnd]);
+    const place = (u) => { reel.style.transform = `translateX(${view.clientWidth / 2 - u * step}px)`; };
+    let lastTile = -1;
+    const setCenter = (u) => {
+      const tile = Math.floor(u);
+      if (tile === lastTile) return;
+      reel.children[lastTile]?.classList.remove("center");
+      lastTile = tile;
+      reel.children[tile]?.classList.add("center");
+    };
+    place(0.45);
+    setCenter(0.45);
+    clip = createClip();
+    if (!quick) clip.play(0);
+    stage.dataset.phase = "unlock";
+    skipBtn.hidden = false;
+    skipBtn.focus();
+    if (!quick) await new Promise((resolve) => {
+      let spun = false;
+      const frame = () => {
+        const at = clip.now();
+        if (skipped || at >= CLIP.hit) return resolve();
+        if (!spun && at >= CLIP.lead) {
+          spun = true;
+          stage.dataset.phase = "spin";
+        }
+        const u = curve(at);
+        place(u);
+        setCenter(u);
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    });
+    skipBtn.hidden = true;
+    place(uEnd);
+    setCenter(uEnd);
+    if (skipped || quick) {
+      clip.play(CLIP.skipTo);
+      await sleep((CLIP.hit - CLIP.skipTo) * 1e3);
+    }
+    reel.children[REEL_WIN].classList.add("won");
+    placeFlair(stage, stage.querySelector(".bx-view"), res.rarity);
+    sfx.reveal(skin.rarity);
+    stage.querySelector(".bx-rarity").textContent = `${RARITY_LABEL(res.rarity)} ${skin.slot}`;
+    stage.querySelector(".bx-name").textContent = skin.name;
+    stage.querySelector(".bx-dupe").textContent = res.duplicate ? `You already had this one: +${res.bonus ?? 0} rally at the start of your next round` : "New skin!";
+    stage.dataset.phase = "reveal";
+    done.hidden = false;
+    done.focus();
+    await new Promise((r) => done.addEventListener("click", r, { once: true }));
+    return res;
+  } finally {
+    clip?.stop();
+    window.removeEventListener("keydown", onKey, true);
+    skipBtn.removeEventListener("click", doSkip);
+    skipBtn.hidden = true;
+    if (pausedMusic) music.resume();
+    stage.hidden = true;
+    stage.dataset.phase = "";
+    done.hidden = true;
+  }
+}
+const timeAgo = (at) => {
+  const m = Math.max(0, Math.floor((Date.now() - at) / 6e4));
+  return m < 1 ? "just now" : m < 60 ? `${m}m ago` : m < 1440 ? `${Math.floor(m / 60)}h ago` : `${Math.floor(m / 1440)}d ago`;
+};
+function renderHistory() {
+  const box = $("#locker-history");
+  if (!loot.history.length) return box.replaceChildren();
+  const title = Object.assign(document.createElement("h3"), { textContent: "Recent drops" });
+  const rows = loot.history.map((h) => {
+    const skin = skinById(h.skin), row = document.createElement("div");
+    row.className = "hist-row";
+    row.dataset.rarity = h.rarity;
+    const name = Object.assign(document.createElement("span"), { textContent: `${skin.name} ${skin.slot}` });
+    const meta = Object.assign(document.createElement("small"), { textContent: `${h.duplicate ? "duplicate \u00B7 " : ""}${timeAgo(h.at)}` });
+    row.append(name, meta);
+    return row;
+  });
+  box.replaceChildren(title, ...rows);
+}
+async function openBox(id) {
+  $("#locker-boxes").querySelectorAll("button").forEach((b) => b.disabled = true);
+  const box = loot.boxes.find((b) => b.id === id);
+  $("#locker-reveal").textContent = "";
+  try {
+    const res = await playBoxOpening(box?.rarity ?? "common", async () => {
+      const r = await auth.api("/api/box/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      if (r.error) throw new Error(r.error);
+      return r;
+    });
+    const skin = skinById(res.skin);
+    $("#locker-reveal").textContent = `${RARITY_LABEL(res.rarity)} box: ${skin.name} ${skin.slot} skin${res.duplicate ? " (you already had it)" : "!"}`;
+    $("#locker-reveal").dataset.rarity = res.rarity;
+  } catch (e) {
+    if (e.message !== "signed-out") $("#locker-reveal").textContent = "Could not open that box. Try again.";
+  }
+  await refreshLoot();
+}
+async function equipSkin(slot, skin) {
+  setLoot({ ...loot, equipped: { ...loot.equipped, [slot]: skin } });
+  try {
+    const res = await auth.api("/api/equip", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot, skin }) });
+    if (res.error) throw new Error(res.error);
+  } catch {
+    await refreshLoot();
+  }
+}
+async function refreshLoot() {
+  try {
+    const me = await auth.api("/api/me");
+    if (!me.error) setLoot(me);
+    return me;
+  } catch {
+  }
+}
+let toastTimer;
+function toast(message) {
+  $("#toast").textContent = message;
+  $("#toast").hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("#toast").hidden = true, 6e3);
+}
+$("#locker-btn").addEventListener("click", () => {
+  $("#locker").hidden = false;
+  $("#locker-reveal").textContent = "";
+  refreshLoot();
+});
+function closeLocker() {
+  if ($("#locker").hidden) return;
+  $("#locker").hidden = true;
+  if (!loot.fresh.length) return;
+  loot.fresh = [];
+  auth.api("/api/skins/seen", { method: "POST" }).catch(() => {});
+}
+$("#locker-close").addEventListener("click", closeLocker);
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeLocker();
+});
 const AUTH_ERRORS = {
   "popup-blocked": "Allow popups for this site, then try again.",
   "no-slack-id": "Hack Club Auth did not share your Slack ID."
@@ -335,7 +756,12 @@ function renderAuth(message) {
   $("#auth-status").textContent = message ?? "";
   $("#auth-status").classList.toggle("bad", !!message);
   $("#auth-who").hidden = !user;
-  if (!user) return;
+  $("#locker-btn").hidden = !user;
+  if (!user) {
+    setLoot({});
+    $("#locker").hidden = true;
+    return;
+  }
   $("#auth-name").textContent = user.slackId;
   $("#auth-pfp").hidden = true;
   auth.loadProfile(user.slackId).then((p) => {
@@ -352,7 +778,11 @@ $("#auth-btn").addEventListener("click", async () => {
   if (auth.signedIn) return auth.signOut();
   $("#auth-btn").disabled = true;
   try {
-    await auth.signIn();
+    const user = await auth.signIn();
+    if (user.welcome > 0) {
+      toast(`Welcome! You got ${user.welcome} free mystery boxes. Open them from "Mystery boxes".`);
+      await refreshLoot();
+    }
   } catch (e) {
     if (e.message !== "cancelled") renderAuth(AUTH_ERRORS[e.message] ?? "Sign-in failed. Try again.");
   } finally {
@@ -481,9 +911,52 @@ window.addEventListener("bounce:best", ({ detail: { mode, rally } }) => {
   flushTimer = setTimeout(flushBest, 2e3);
 });
 window.addEventListener("pagehide", () => flushBest(true));
+let boxChain = Promise.resolve(), rallyBox = null;
+setBonusClaimer(async () => {
+  if (!auth.signedIn) return 0;
+  const res = await auth.api("/api/bonus/claim", { method: "POST" });
+  loot.bonus = 0;
+  return res.bonus ?? 0;
+});
+for (const [id, kind] of [["#vol-music", "music"], ["#vol-sfx", "sfx"]]) {
+  const input = $(id);
+  input.value = Math.round(volume[kind] * 100);
+  input.addEventListener("input", () => setVolume(kind, input.value / 100));
+}
+window.addEventListener("bounce:bonus", ({ detail: { bonus } }) => toast(`Duplicate bonus: +${bonus} rally`));
+window.addEventListener("bounce:rallyend", () => {
+  boxChain = boxChain.then(() => {
+    rallyBox = null;
+  });
+});
+window.addEventListener("bounce:milestone", ({ detail: { threshold } }) => {
+  if (!auth.signedIn) return toast("Sign in to earn mystery boxes");
+  boxChain = boxChain.then(async () => {
+    const upgrade = rallyBox?.threshold < threshold ? rallyBox.id : void 0;
+    const send = () => auth.api("/api/box/earn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ threshold, upgrade }) });
+    try {
+      let res;
+      try {
+        res = await send();
+      } catch (e) {
+        if (e.message === "signed-out") throw e;
+        res = await send();
+      }
+      if (!res.box) throw new Error(res.error ?? "failed");
+      rallyBox = res.box;
+      toast(res.upgraded ? `Your mystery box upgraded to ${res.box.rarity}!` : `You earned a ${res.box.rarity} mystery box!`);
+      refreshLoot();
+    } catch (e) {
+      if (e.message !== "signed-out") toast("Could not award your mystery box");
+    }
+  });
+});
 async function syncBest() {
   try {
-    const { bests = {} } = await auth.api("/api/me");
+    const me = await auth.api("/api/me");
+    if (me.error) return;
+    setLoot(me);
+    const { bests = {} } = me;
     for (const mode of MODES) {
       const remote = bests[mode] ?? 0, local = loadBest(mode);
       if (remote > local) {

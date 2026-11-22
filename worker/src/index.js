@@ -39,16 +39,48 @@ export default {
     if (url.pathname !== "/signal") return new Response("Not found", { status: 404 });
     if (request.headers.get("Upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
     const allowed = (env.ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    if (allowed.length && !allowed.includes(request.headers.get("Origin"))) return new Response("Forbidden", { status: 403 });
-    const joining = url.searchParams.has("code");
+    if (allowed.length && !allowed.includes(request.headers.get("Origin"))) {
+      console.warn("signal rejected: origin", request.headers.get("Origin"), "not in ALLOWED_ORIGINS", allowed.join(","));
+      return new Response("Forbidden", { status: 403 });
+    }
+    let joining = url.searchParams.has("code");
     const asked = (url.searchParams.get("code") ?? "").trim().toUpperCase();
-    const code = joining ? CODE_RE.test(asked) ? asked : "XXXX-invalid" : newCode();
+    let code = joining ? CODE_RE.test(asked) ? asked : "XXXX-invalid" : newCode();
+    if (url.searchParams.has("quick")) {
+      const size = Number(url.searchParams.get("quick"));
+      if (!SIZES.includes(size)) return new Response("Bad request", { status: 400 });
+      const stale = (url.searchParams.get("stale") ?? "").toUpperCase();
+      const assigned = await env.MATCHMAKER.get(env.MATCHMAKER.idFromName("global")).fetch(`https://matchmaker/assign?size=${size}&stale=${CODE_RE.test(stale) ? stale : ""}`).then((r) => r.json());
+      code = assigned.code;
+      joining = assigned.intent === "join";
+    }
     const headers = new Headers(request.headers);
     headers.set("x-room-code", code);
     headers.set("x-intent", joining ? "join" : "create");
     return env.ROOMS.get(env.ROOMS.idFromName(code)).fetch(new Request(request, { headers }));
   }
 };
+export class Matchmaker {
+  constructor() {
+    this.open = new Map();
+  }
+  async fetch(request) {
+    const url = new URL(request.url);
+    const size = Number(url.searchParams.get("size")), stale = url.searchParams.get("stale");
+    if (!SIZES.includes(size)) return new Response("Bad request", { status: 400 });
+    let lobby = this.open.get(size);
+    if (lobby && lobby.code === stale) lobby = null;
+    if (lobby) {
+      if (++lobby.seated >= size) this.open.delete(size);
+      console.log(`matchmaker: size ${size} -> join ${lobby.code} (${lobby.seated}/${size})`);
+      return Response.json({ code: lobby.code, intent: "join" });
+    }
+    const code = newCode();
+    this.open.set(size, { code, seated: 1 });
+    console.log(`matchmaker: size ${size} -> create ${code}${stale ? ` (dropped stale ${stale})` : ""}`);
+    return Response.json({ code, intent: "create" });
+  }
+}
 export class Room {
   constructor(state) {
     this.state = state;
@@ -103,6 +135,7 @@ export class Room {
       return this.send(peer, { type: "error", reason: "bad-message" });
     }
     if (!message || typeof message !== "object") return this.send(peer, { type: "error", reason: "bad-message" });
+    if (message.type === "quick") message = intent === "create" ? { type: "create", size: message.size } : { type: "join" };
     switch (message.type) {
       case "create": {
         if (intent !== "create") return this.send(peer, { type: "error", reason: "bad-message" });
@@ -121,9 +154,9 @@ export class Room {
         if (intent !== "join") return this.send(peer, { type: "error", reason: "bad-message" });
         if (peer.joined) return this.send(peer, { type: "error", reason: "already-in-room" });
         const room = this.room;
-        if (!room) return this.send(peer, { type: "error", reason: "no-such-room" });
+        if (!room) return this.send(peer, { type: "error", reason: "no-such-room", code });
         const seat = room.started ? -1 : room.members.indexOf(null);
-        if (seat < 0) return this.send(peer, { type: "error", reason: "room-full" });
+        if (seat < 0) return this.send(peer, { type: "error", reason: "room-full", code });
         const peers = room.members.flatMap((m, i) => m ? [i] : []);
         room.members[seat] = peer;
         peer.index = seat;

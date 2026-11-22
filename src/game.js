@@ -11,6 +11,8 @@ import woosh1Url from "../assets/audio/Woosh1.wav";
 import woosh2Url from "../assets/audio/Woosh2.wav";
 import woosh3Url from "../assets/audio/Woosh3.wav";
 import { exitTarget, entryState, predictExit } from "./topology.js";
+import { skinById, MILESTONES, MAX_PENDING_BONUS } from "./skins.js";
+import { volume as vol, volumeEvents } from "./volume.js";
 const WIDTH = 800, HEIGHT = 450;
 const RES = 2;
 const PADDLE = { length: 180, thickness: 24, hitPad: 12 };
@@ -34,6 +36,23 @@ export const saveBest = (mode, n) => {
   } catch {
   }
 };
+const MUSIC_VOLUME = 0.5;
+let equipped = { ball: null, paddle: null };
+let pendingBonus = 0, claimBonus = null;
+export function setPendingBonus(n) {
+  pendingBonus = Math.max(0, Math.min(MAX_PENDING_BONUS, Math.floor(n) || 0));
+}
+export function setBonusClaimer(fn) {
+  claimBonus = fn;
+}
+let menuOpen = true;
+export function setMenuOpen(open) {
+  menuOpen = !!open;
+}
+export function setEquippedSkins(next) {
+  equipped = { ball: next?.ball ?? null, paddle: next?.paddle ?? null };
+}
+const hueColor = (hue) => Phaser.Display.Color.HSVToRGB(((hue % 1) + 1) % 1, 0.55, 1).color;
 const currentMode = () => net.state === "connected" && MODES.includes(net.size) ? net.size : 1;
 const RETURN_GAP_MS = 350;
 const WARN_LEAD_MS = 1200;
@@ -74,12 +93,15 @@ class CourtScene extends Phaser.Scene {
     WOOSH_KEYS.forEach((k, i) => this.load.audio(k, [woosh1Url, woosh2Url, woosh3Url][i]));
   }
   sfx(keys, volume = 0.8) {
-    this.sound.play(Phaser.Utils.Array.GetRandom(keys), { volume });
+    this.sound.play(Phaser.Utils.Array.GetRandom(keys), { volume: volume * vol.sfx });
   }
   create() {
-    this.sound.play("music", { loop: true, volume: 0.5 });
+    this.sound.play("music", { loop: true, volume: MUSIC_VOLUME * vol.music });
+    this.onVolume = () => this.sound.get("music")?.setVolume(MUSIC_VOLUME * vol.music);
+    volumeEvents.addEventListener("change", this.onVolume);
+    this.events.once("shutdown", () => volumeEvents.removeEventListener("change", this.onVolume));
     this.cameras.main.setZoom(RES).setScroll(WIDTH / 2 * (1 - RES), HEIGHT / 2 * (1 - RES));
-    this.add.image(WIDTH / 2, HEIGHT / 2, "bg").setDisplaySize(WIDTH, HEIGHT);
+    this.add.image(WIDTH / 2, HEIGHT / 2, "bg").setDisplaySize(WIDTH, HEIGHT).setDepth(-2);
     const logTex = this.textures.get("log"), src = logTex.getSourceImage();
     for (let i = 0; i < SEGMENTS; i++) {
       logTex.add(`s${i}`, 0, Math.floor(i * src.width / SEGMENTS), 0, Math.ceil(src.width / SEGMENTS) + 1, src.height);
@@ -90,7 +112,7 @@ class CourtScene extends Phaser.Scene {
     this.targetVelocity = { x: 0, y: 0 };
     this.catching = false;
     this.curl = 0;
-    this.paddle = this.add.graphics();
+    this.paddle = this.add.graphics().setDepth(-1);
     this.mode = 1;
     this.best = loadBest(1);
     this.hud = this.add.text(WIDTH - 14, 10, "", { fontFamily: "monospace", fontSize: "16px", color: "#ffffff", align: "right", stroke: "#000000", strokeThickness: 3, resolution: RES }).setOrigin(1, 0).setDepth(20);
@@ -114,6 +136,9 @@ class CourtScene extends Phaser.Scene {
     this.input.on("pointerdown", () => {
       if (this.hasBall) this.launch();
     });
+    this.onRestart = () => this.launch();
+    window.addEventListener("bounce:restart", this.onRestart);
+    this.events.once("shutdown", () => window.removeEventListener("bounce:restart", this.onRestart));
     this.wasOnline = false;
     this.onStatus = () => {
       const online = net.state === "connected";
@@ -147,7 +172,9 @@ class CourtScene extends Phaser.Scene {
       this.ball.setPosition(entry.x, entry.y);
       this.velocity = { x: entry.vx, y: entry.vy };
       this.hitSinceReceive = false;
-      this.rally = Number.isFinite(m.rally) ? Phaser.Math.Clamp(Math.floor(m.rally), 0, 99) : 0;
+      const incoming = Number.isFinite(m.rally) ? Phaser.Math.Clamp(Math.floor(m.rally), 0, 99) : 0;
+      if (incoming < this.rally) this.endRally();
+      this.rally = incoming;
       this.trail = [];
       this.setHasBall(true);
     };
@@ -174,7 +201,21 @@ class CourtScene extends Phaser.Scene {
       if (e.detail.mode === this.mode) this.best = Math.max(this.best, e.detail.rally);
     };
     window.addEventListener("bounce:setbest", this.onSetBest);
+    if (import.meta.env.DEV) {
+      this.onDevKey = (e) => {
+        if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return;
+        if (e.key === "=" || e.key === "+") this.addRally(1);
+        else if (e.key === "]") this.addRally(10);
+        else if (e.key === "[") {
+          const next = MILESTONES.find((m) => m.threshold > this.rally);
+          if (next) this.addRally(next.threshold - this.rally);
+        }
+      };
+      window.addEventListener("keydown", this.onDevKey);
+      window.__bounce = { addRally: (n = 1) => this.addRally(n), scene: this };
+    }
     this.events.once("shutdown", () => {
+      if (this.onDevKey) window.removeEventListener("keydown", this.onDevKey);
       window.removeEventListener("handinput", this.onHand);
       window.removeEventListener("bounce:setbest", this.onSetBest);
     });
@@ -188,7 +229,16 @@ class CourtScene extends Phaser.Scene {
   launch() {
     this.held = false;
     this.ball.setPosition(WIDTH / 2, HEIGHT * 0.25);
-    this.rally = 0;
+    this.endRally();
+    if (pendingBonus && !menuOpen && claimBonus) {
+      const serve = this.serve = (this.serve ?? 0) + 1, claim = claimBonus();
+      pendingBonus = 0;
+      claim.then((bonus) => {
+        if (!(bonus > 0) || this.serve !== serve || !this.scene?.isActive()) return;
+        this.addRally(bonus);
+        window.dispatchEvent(new CustomEvent("bounce:bonus", { detail: { bonus } }));
+      }).catch(() => {});
+    }
     this.hitSinceReceive = false;
     this.trail = [];
     this.velocity = { x: Phaser.Math.Between(-250, 250), y: 0 };
@@ -232,8 +282,15 @@ class CourtScene extends Phaser.Scene {
     const cy = Phaser.Math.Clamp(py * HEIGHT, -minY, HEIGHT - maxY);
     const world = points.map((p) => ({ x: p.x + cx, y: p.y + cy }));
     const segLen = PADDLE.length / SEGMENTS;
+    const paddleSkin = skinById(equipped.paddle), now = performance.now();
+    if (paddleSkin?.glow) {
+      this.paddle.lineStyle(LOG_HEIGHT + 10, paddleSkin.glow, 0.28);
+      this.paddle.strokePoints(world, false, false);
+    }
     this.logSprites.forEach((spr, i) => {
       const a = world[i], b = world[i + 1];
+      if (!paddleSkin) spr.clearTint();
+      else spr.setTint(paddleSkin.rainbow ? hueColor(now / 3000 + i / SEGMENTS * 0.6) : paddleSkin.tint);
       spr.setPosition((a.x + b.x) / 2, (a.y + b.y) / 2).setRotation(Math.atan2(b.y - a.y, b.x - a.x)).setDisplaySize(segLen + 1, LOG_HEIGHT).setVisible(true);
     });
     if (this.lastPaddle && dt > 0) {
@@ -409,7 +466,7 @@ BEST ${this.best}`);
       ball.y = HEIGHT - r;
       v.y = -Math.abs(v.y) * BALL.wallBounce;
       this.dampenBallSpeed();
-      this.rally = 0;
+      this.endRally();
       if (Math.abs(v.y) < 40) v.y = 0;
     }
   }
@@ -418,10 +475,21 @@ BEST ${this.best}`);
       if (this.hitSinceReceive) return;
       this.hitSinceReceive = true;
     }
-    this.rally++;
+    this.addRally(1);
     this.velocity.x *= BALL.returnBoost;
     this.velocity.y *= BALL.returnBoost;
     this.ballPulse = 1;
+  }
+  endRally() {
+    if (this.rally > 0) window.dispatchEvent(new CustomEvent("bounce:rallyend"));
+    this.rally = 0;
+  }
+  addRally(n) {
+    for (let i = 0; i < n; i++) {
+      this.rally++;
+      const milestone = MILESTONES.find((m) => m.threshold === this.rally);
+      if (milestone) window.dispatchEvent(new CustomEvent("bounce:milestone", { detail: { threshold: milestone.threshold } }));
+    }
   }
   heat() {
     return Phaser.Math.Clamp(this.rally / BALL.heatReturns, 0, 1);
@@ -433,8 +501,10 @@ BEST ${this.best}`);
     this.ballPulse = Math.max(0, (this.ballPulse || 0) - dt * 5);
     const pulse = 1 + this.ballPulse * 0.35;
     ball.setScale(this.baseScale.x * pulse, this.baseScale.y * pulse);
+    const skin = skinById(equipped.ball);
+    const baseColor = !skin ? 0xffffff : skin.rainbow ? hueColor(performance.now() / 1500) : skin.tint;
     const tint = Phaser.Display.Color.Interpolate.ColorWithColor(
-      new Phaser.Display.Color(255, 255, 255),
+      Phaser.Display.Color.IntegerToColor(baseColor),
       new Phaser.Display.Color(255, heat < 1 ? 150 : 70, 60),
       100,
       Math.round(heat * 100)
@@ -444,11 +514,17 @@ BEST ${this.best}`);
     this.trail.push({ x: ball.x, y: ball.y });
     if (this.trail.length > BALL.trailMax) this.trail.shift();
     const speed = this.velocity ? Math.hypot(this.velocity.x, this.velocity.y) : 0;
+    if (skin?.glow) {
+      g.fillStyle(skin.glow, 0.16);
+      g.fillCircle(ball.x, ball.y, BALL.radius * 1.5);
+    }
     const intensity = Math.max(heat, Phaser.Math.Clamp((speed - 500) / (BALL.maxSpeed - 500), 0, 1));
     if (intensity <= 0.02) return;
     const len = Math.ceil(4 + intensity * (BALL.trailMax - 4));
     const pts = this.trail.slice(-len);
-    const color = Phaser.Display.Color.GetColor(255, Math.round(230 - 160 * heat), Math.round(200 - 150 * heat));
+    const warm = Phaser.Display.Color.IntegerToColor(skin?.rainbow ? baseColor : skin?.trail ?? 0xffe6c8);
+    const hot = Phaser.Display.Color.Interpolate.ColorWithColor(warm, new Phaser.Display.Color(255, 70, 50), 100, Math.round(heat * 100));
+    const color = Phaser.Display.Color.GetColor(hot.r, hot.g, hot.b);
     pts.forEach((p, i) => {
       const f = (i + 1) / pts.length;
       g.fillStyle(color, f * (0.15 + 0.5 * intensity));

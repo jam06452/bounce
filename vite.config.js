@@ -1,21 +1,15 @@
 import { defineConfig } from 'vite'
 import basicSsl from '@vitejs/plugin-basic-ssl'
-import { createSignaling } from './server/rooms.js'
 
-function signalingPlugin() {
-  const attach = (server) => {
-    const signaling = createSignaling()
-    server.httpServer?.on('upgrade', (req, socket, head) => {
-      if (new URL(req.url, 'http://x').pathname === '/signal') signaling.handleUpgrade(req, socket, head)
-    })
-    server.httpServer?.on('close', () => signaling.close())
-  }
-  return { name: 'signaling', configureServer: attach, configurePreviewServer: attach }
-}
+const worker = { target: process.env.WORKER_URL ?? 'http://localhost:8787', ws: true }
 
 export default defineConfig({
-  plugins: [basicSsl(), signalingPlugin()],
-  server: { host: true, port: 5173 },
+  plugins: [basicSsl()],
+  server: {
+    host: true,
+    port: 5173,
+    proxy: { '/signal': worker, '/turn': worker, '/auth': worker, '/api': worker },
+  },
   worker: { format: 'iife' },
   preview: { host: true, port: 4173 },
 })
