@@ -604,6 +604,10 @@ button.link {
   color: #e6d3bd;
 }
 
+#auth-who[hidden] {
+  display: none;
+}
+
 #auth-pfp {
   border-radius: 50%;
   object-fit: cover;
