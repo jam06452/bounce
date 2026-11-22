@@ -1,4 +1,5 @@
 import * as oauth from "oauth4webapi";
+import { refreshDisplayName } from "./names.js";
 import { rarityOf, pickSkin, rollRarity, parseEquipped, skinById, SLOTS, DUPLICATE_BONUS, MAX_PENDING_BONUS, WELCOME_BOXES } from "../../src/skins.js";
 const ISSUER = new URL("https://auth.hackclub.com");
 const SCOPE = "openid slack_id";
@@ -58,7 +59,7 @@ async function login(request, env, url) {
   }
   return new Response(null, { status: 302, headers: { Location: target.toString(), "Cache-Control": "no-store" } });
 }
-async function callback(request, env, url) {
+async function callback(request, env, url, ctx) {
   const state = url.searchParams.get("state");
   if (!state) return new Response("Missing state", { status: 400 });
   const attempt = await env.DB.prepare("DELETE FROM auth_attempts WHERE state = ? AND expires_at > ? RETURNING verifier, nonce, origin").bind(state, Date.now()).first();
@@ -87,6 +88,7 @@ async function callback(request, env, url) {
     const user = await env.DB.prepare(
       "INSERT INTO users (sub, slack_id, created_at, welcomed) VALUES (?, ?, ?, 0) ON CONFLICT(sub) DO UPDATE SET slack_id = excluded.slack_id RETURNING id, slack_id"
     ).bind(claims.sub, slackId, now).first();
+    ctx.waitUntil(refreshDisplayName(env, user.id, user.slack_id).catch((err) => console.error("display name refresh failed", err?.message)));
     const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
     const [welcome] = await env.DB.batch([
       env.DB.prepare("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?4) INSERT INTO box_awards (user_id, threshold, awarded_at) SELECT u.id, ?2, ?3 FROM users u, n WHERE u.id = ?1 AND u.welcomed = 0").bind(user.id, WELCOME_BOXES.threshold, now, WELCOME_BOXES.count),
@@ -305,7 +307,7 @@ export async function handleAuth(request, env, url, ctx) {
   if (!env.DB) return new Response("Database is not configured", { status: 500 });
   try {
     if (pathname === "/auth/login" && request.method === "GET") return await login(request, env, url);
-    if (pathname === "/auth/callback" && request.method === "GET") return await callback(request, env, url);
+    if (pathname === "/auth/callback" && request.method === "GET") return await callback(request, env, url, ctx);
     if (pathname === "/auth/logout" && request.method === "POST") return await logout(request, env);
     if (pathname === "/api/me" && request.method === "GET") return await me(request, env);
     if (pathname === "/api/leaderboard" && request.method === "GET") return await leaderboard(request, env, url);
