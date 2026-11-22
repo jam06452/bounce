@@ -18,3 +18,21 @@ export function entryState(m, width, height, radius) {
     default: return null
   }
 }
+
+export function predictExit(ball, v, gravity, radius, width, height, exits, maxMs = Infinity) {
+  const hits = []
+  const consider = (edge, t, coord) => { if (exits.includes(edge) && t >= 0 && t * 1000 <= maxMs) hits.push({ edge, ms: t * 1000, coord }) }
+  const yAt = (t) => ball.y + v.y * t + 0.5 * gravity * t * t
+  if (v.x < 0) { const t = (ball.x - radius) / -v.x; consider('left', t, yAt(t)) }
+  if (v.x > 0) { const t = (width - radius - ball.x) / v.x; consider('right', t, yAt(t)) }
+  const a = 0.5 * gravity, b = v.y, c = ball.y - radius
+  let t = null
+  if (c <= 0) t = v.y < 0 ? 0 : null
+  else if (Math.abs(a) < 1e-9) t = b < 0 ? -c / b : null
+  else {
+    const disc = b * b - 4 * a * c
+    if (disc >= 0 && b < 0) t = (-b - Math.sqrt(disc)) / (2 * a)
+  }
+  if (t !== null && t >= 0) consider('top', t, ball.x + v.x * t)
+  return hits.sort((p, q) => p.ms - q.ms)[0] ?? null
+}
