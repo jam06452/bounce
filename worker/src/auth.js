@@ -9,7 +9,7 @@ const authServer = () => metadata ??= oauth.discoveryRequest(ISSUER).then((res) 
   throw err;
 });
 const allowedOrigins = (env) => (env.ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\
+const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const sha256hex = async (text) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))), (b) => b.toString(16).padStart(2, "0")).join("");
 const inline = (value) => JSON.stringify(value).replace(/</g, "\\u003c");
 function cors(request, env, response) {
