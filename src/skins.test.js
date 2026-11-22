@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SKINS, MILESTONES, RARITIES, reachedMilestones, pickSkin, parseEquipped, rarityOf, DUPLICATE_BONUS, MAX_PENDING_BONUS } from "./skins.js";
+import { SKINS, MILESTONES, RARITIES, reachedMilestones, pickSkin, parseEquipped, rarityOf, rollRarity, DROP_TABLE, DUPLICATE_BONUS, MAX_PENDING_BONUS } from "./skins.js";
 
 test("milestones map to rarities in order", () => {
   assert.deepEqual(MILESTONES.map((m) => m.threshold), [25, 50, 100, 250, 500]);
@@ -39,4 +39,14 @@ test("duplicate bonus covers every rarity and can never reach the first mileston
   for (const r of RARITIES) assert.ok(Number.isInteger(DUPLICATE_BONUS[r]) && DUPLICATE_BONUS[r] > 0, r);
   assert.ok(MAX_PENDING_BONUS < MILESTONES[0].threshold);
   assert.ok(Math.max(...Object.values(DUPLICATE_BONUS)) <= MAX_PENDING_BONUS);
+});
+
+test("legendary boxes can drop below legendary, other boxes keep their rarity", () => {
+  const seen = new Set([0, 0.3, 0.5, 0.69, 0.7, 0.99].map((r) => rollRarity("legendary", () => r)));
+  assert.deepEqual([...seen].sort(), ["epic", "legendary", "rare"]);
+  assert.equal(rollRarity("legendary", () => 0), "legendary");
+  for (const r of ["common", "uncommon", "rare", "epic"]) assert.equal(rollRarity(r, () => 0.5), r);
+  for (const [box, table] of Object.entries(DROP_TABLE)) {
+    for (const drop of Object.keys(table)) assert.ok(RARITIES.indexOf(drop) <= RARITIES.indexOf(box), `${box} -> ${drop}`);
+  }
 });

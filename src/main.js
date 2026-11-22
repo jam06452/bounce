@@ -648,9 +648,10 @@ async function playBoxOpening(rarity, request) {
       await sleep((CLIP.hit - CLIP.skipTo) * 1e3);
     }
     reel.children[REEL_WIN].classList.add("won");
-    placeFlair(stage, stage.querySelector(".bx-view"), res.rarity);
+    stage.dataset.rarity = skin.rarity;
+    placeFlair(stage, stage.querySelector(".bx-view"), skin.rarity);
     sfx.reveal(skin.rarity);
-    stage.querySelector(".bx-rarity").textContent = `${RARITY_LABEL(res.rarity)} ${skin.slot}`;
+    stage.querySelector(".bx-rarity").textContent = `${RARITY_LABEL(skin.rarity)} ${skin.slot}`;
     stage.querySelector(".bx-name").textContent = skin.name;
     stage.querySelector(".bx-dupe").textContent = res.duplicate ? `You already had this one: +${res.bonus ?? 0} rally at the start of your next round` : "New skin!";
     stage.dataset.phase = "reveal";
@@ -680,7 +681,7 @@ function renderHistory() {
   const rows = loot.history.map((h) => {
     const skin = skinById(h.skin), row = document.createElement("div");
     row.className = "hist-row";
-    row.dataset.rarity = h.rarity;
+    row.dataset.rarity = skin.rarity;
     const name = Object.assign(document.createElement("span"), { textContent: `${skin.name} ${skin.slot}` });
     const meta = Object.assign(document.createElement("small"), { textContent: `${h.duplicate ? "duplicate \u00B7 " : ""}${timeAgo(h.at)}` });
     row.append(name, meta);
@@ -700,7 +701,7 @@ async function openBox(id) {
     });
     const skin = skinById(res.skin);
     $("#locker-reveal").textContent = `${RARITY_LABEL(res.rarity)} box: ${skin.name} ${skin.slot} skin${res.duplicate ? " (you already had it)" : "!"}`;
-    $("#locker-reveal").dataset.rarity = res.rarity;
+    $("#locker-reveal").dataset.rarity = skin.rarity;
   } catch (e) {
     if (e.message !== "signed-out") $("#locker-reveal").textContent = "Could not open that box. Try again.";
   }

@@ -9,6 +9,21 @@ export const RARITIES = MILESTONES.map((m) => m.rarity);
 export const DUPLICATE_BONUS = { common: 1, uncommon: 2, rare: 3, epic: 5, legendary: 10 };
 export const MAX_PENDING_BONUS = MILESTONES[0].threshold - 1;
 export const WELCOME_BOXES = { count: 5, threshold: MILESTONES[0].threshold };
+export const DROP_TABLE = {
+  common: { common: 1 },
+  uncommon: { uncommon: 1 },
+  rare: { rare: 1 },
+  epic: { epic: 1 },
+  legendary: { legendary: 30, epic: 40, rare: 30 }
+};
+export function rollRarity(boxRarity, random = Math.random) {
+  const entries = Object.entries(DROP_TABLE[boxRarity] ?? {});
+  if (!entries.length) return boxRarity;
+  const total = entries.reduce((sum, [, w]) => sum + w, 0);
+  let r = random() * total;
+  for (const [rarity, w] of entries) if ((r -= w) < 0) return rarity;
+  return entries[entries.length - 1][0];
+}
 export const rarityOf = (threshold) => MILESTONES.find((m) => m.threshold === threshold)?.rarity ?? null;
 
 export const SKINS = [

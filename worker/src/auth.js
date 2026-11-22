@@ -1,5 +1,5 @@
 import * as oauth from "oauth4webapi";
-import { rarityOf, pickSkin, parseEquipped, skinById, SLOTS, DUPLICATE_BONUS, MAX_PENDING_BONUS, WELCOME_BOXES } from "../../src/skins.js";
+import { rarityOf, pickSkin, rollRarity, parseEquipped, skinById, SLOTS, DUPLICATE_BONUS, MAX_PENDING_BONUS, WELCOME_BOXES } from "../../src/skins.js";
 const ISSUER = new URL("https://auth.hackclub.com");
 const SCOPE = "openid slack_id";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -88,9 +88,8 @@ async function callback(request, env, url) {
       "INSERT INTO users (sub, slack_id, created_at, welcomed) VALUES (?, ?, ?, 0) ON CONFLICT(sub) DO UPDATE SET slack_id = excluded.slack_id RETURNING id, slack_id"
     ).bind(claims.sub, slackId, now).first();
     const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
-    const copies = Array.from({ length: WELCOME_BOXES.count }, (_, i) => `SELECT ${i + 1}`).join(" UNION ALL ");
     const [welcome] = await env.DB.batch([
-      env.DB.prepare(`INSERT INTO box_awards (user_id, threshold, awarded_at) SELECT u.id, ?2, ?3 FROM users u, (${copies}) WHERE u.id = ?1 AND u.welcomed = 0`).bind(user.id, WELCOME_BOXES.threshold, now),
+      env.DB.prepare("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?4) INSERT INTO box_awards (user_id, threshold, awarded_at) SELECT u.id, ?2, ?3 FROM users u, n WHERE u.id = ?1 AND u.welcomed = 0").bind(user.id, WELCOME_BOXES.threshold, now, WELCOME_BOXES.count),
       env.DB.prepare("UPDATE users SET welcomed = 1 WHERE id = ? AND welcomed = 0").bind(user.id),
       env.DB.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)").bind(await sha256hex(token), user.id, now + SESSION_TTL_MS)
     ]);
@@ -144,7 +143,7 @@ async function openBox(request, env) {
   if (!box) return json(request, env, { error: "no-such-box" }, 404);
   const threshold = box.threshold, rarity = rarityOf(threshold);
   const { results } = await env.DB.prepare("SELECT skin_id FROM inventory WHERE user_id = ?").bind(user.id).all();
-  const pick = pickSkin(rarity, new Set(results.map((r) => r.skin_id)));
+  const pick = pickSkin(rollRarity(rarity), new Set(results.map((r) => r.skin_id)));
   const now = Date.now();
   const [claimed] = await env.DB.batch([
     env.DB.prepare("UPDATE box_awards SET opened_at = ?, skin_id = ?, duplicate = ? WHERE id = ? AND user_id = ? AND opened_at IS NULL RETURNING id").bind(now, pick.skin.id, pick.duplicate ? 1 : 0, id, user.id),
@@ -153,10 +152,10 @@ async function openBox(request, env) {
     ).bind(user.id, pick.skin.id, now, id),
     env.DB.prepare(
       "UPDATE users SET pending_bonus = MIN(?1, pending_bonus + ?2) WHERE id = ?3 AND ?2 > 0 AND EXISTS (SELECT 1 FROM box_awards WHERE id = ?4 AND user_id = ?3 AND opened_at = ?5)"
-    ).bind(MAX_PENDING_BONUS, pick.duplicate ? DUPLICATE_BONUS[rarity] ?? 0 : 0, user.id, id, now)
+    ).bind(MAX_PENDING_BONUS, pick.duplicate ? DUPLICATE_BONUS[pick.skin.rarity] ?? 0 : 0, user.id, id, now)
   ]);
   if (!claimed.results.length) return json(request, env, { error: "no-such-box" }, 404);
-  return json(request, env, { id, threshold, rarity, skin: pick.skin.id, duplicate: pick.duplicate, bonus: pick.duplicate ? DUPLICATE_BONUS[rarity] ?? 0 : 0 });
+  return json(request, env, { id, threshold, rarity, skin: pick.skin.id, duplicate: pick.duplicate, bonus: pick.duplicate ? DUPLICATE_BONUS[pick.skin.rarity] ?? 0 : 0 });
 }
 async function earnBox(request, env) {
   const user = await authenticate(request, env);
