@@ -16,5 +16,6 @@ function signalingPlugin() {
 export default defineConfig({
   plugins: [basicSsl(), signalingPlugin()],
   server: { host: true, port: 5173 },
+  worker: { format: 'iife' },
   preview: { host: true, port: 4173 },
 })

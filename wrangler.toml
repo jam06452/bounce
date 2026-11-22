@@ -7,7 +7,7 @@ preview_urls = false
 [assets]
 directory = "./dist"
 not_found_handling = "single-page-application"
-run_worker_first = ["/signal", "/health", "/turn"]
+run_worker_first = ["/signal", "/health", "/turn", "/auth/*", "/api/*"]
 
 [vars]
 ALLOWED_ORIGINS = "https://bounce.jam06452.uk,https://bounce.danjward8.workers.dev"
@@ -19,3 +19,14 @@ class_name = "Room"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"] # SQLite-backed Durable Objects are the ones available on the free plan
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bounce"
+database_id = "b481e550-2a1f-497a-b032-c6fa25445c48"
+migrations_dir = "migrations"
+
+# Caches the top-10 boards. Create with `npx wrangler kv namespace create BOARD`, then paste the printed id here.
+[[kv_namespaces]]
+binding = "BOARD"
+id = "00000000000000000000000000000000"
