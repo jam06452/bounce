@@ -30,6 +30,21 @@ migrations_dir = "migrations"
 binding = "BOARD"
 id = "822fc3cc6b1c4bdca2589c0ab31df364"
 
+[observability]
+enabled = false
+head_sampling_rate = 1
+redact_query_string = false
+
 [observability.logs]
 enabled = true
+head_sampling_rate = 1
 invocation_logs = true
+persist = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+persist = true
+
+[observability.issue_detection]
+enabled = true
