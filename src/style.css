@@ -860,8 +860,14 @@ button.link {
   width: 100vw;
   height: 250px;
   overflow: hidden;
-  -webkit-mask: radial-gradient(circle 330px at 50% 50%, #000 calc(100% - 1px), #0000005c 100%);
-  mask: radial-gradient(circle 330px at 50% 50%, #000 calc(100% - 1px), #0000005c 100%);
+}
+/* Dims everything outside the centre circle. A plain overlay is much cheaper to draw than masking the moving reel. */
+.bx-view::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle 330px at 50% 50%, #0000 calc(100% - 1px), #1c120ca3 100%);
 }
 .bx-view::before {
   content: "";
@@ -898,7 +904,6 @@ button.link {
   place-items: center;
   background: linear-gradient(#5a4130 0%, #3a2819 55%, color-mix(in srgb, var(--t) 50%, #3a2819) 100%);
   border-bottom: 6px solid var(--t);
-  transition: transform 0.12s linear;
 }
 .bx-tile::after {
   content: "";
@@ -911,8 +916,10 @@ button.link {
 .bx-tile[data-rarity=rare] { --t: #3d7bff; }
 .bx-tile[data-rarity=epic] { --t: #8847ff; }
 .bx-tile[data-rarity=legendary] { --t: #ffc933; }
-.bx-tile.center, .bx-tile.won { transform: scale(1.1); }
-.bx-art { position: relative; z-index: 1; width: 150px; height: auto; filter: drop-shadow(0 8px 10px #0005); }
+.bx-tile.won { transform: scale(1.1); }
+.bx-art { position: relative; z-index: 1; width: 150px; height: auto; }
+.bx-tile.won .bx-art { filter: drop-shadow(0 8px 10px #0005); }
+.bx-tile.won .bx-art[data-glow] { filter: drop-shadow(0 8px 10px #0005) drop-shadow(0 0 14px var(--glow)); }
 .bx-art[data-slot=paddle] { width: 240px; }
 
 .bx-result { position: relative; min-height: 96px; margin-top: 26px; text-align: center; opacity: 0; transition: opacity 0.4s; }
@@ -936,6 +943,7 @@ button.link {
 }
 .bx-rays {
   z-index: 0;
+  will-change: transform;
   width: 1100px; height: 1100px;
   margin: -550px 0 0 -550px;
   background: repeating-conic-gradient(color-mix(in srgb, var(--c) 40%, transparent) 0 7deg, transparent 7deg 18deg);

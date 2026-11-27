@@ -3,11 +3,13 @@ import { HandLandmarker, DrawingUtils } from "@mediapipe/tasks-vision";
 import { LandmarkFilter } from "./trackingFilter.js";
 import bgUrl from "../assets/textures/bg.png";
 import caseClipUrl from "../assets/audio/CaseOpen.mp3";
+import goldClipUrl from "../assets/audio/GOLD GOLD GOLD.mp3";
+import neinClipUrl from "../assets/audio/NEIN.mp3";
 import ballUrl from "../assets/textures/ball.png";
 import logUrl from "../assets/textures/log.png";
 import { createGame, loadBest, saveBest, setEquippedSkins, setPendingBonus, setBonusClaimer, setMenuOpen, MODES } from "./game.js";
 import { SKINS, SLOTS, MILESTONES, RARITIES, skinById } from "./skins.js";
-import { volume, volumeEvents, setVolume } from "./volume.js";
+import { volume, volumeEvents, setVolume, CHANNELS, caseOpen } from "./volume.js";
 import { net } from "./net.js";
 import { auth } from "./auth.js";
 import { startFeed } from "./feed.js";
@@ -88,7 +90,7 @@ document.querySelector("#app").innerHTML = `
   <small id="lb-status" role="status"></small>
 </aside>
 <div class="workspace closed" id="panel" inert><section class="camera"><video autoplay muted playsinline></video><canvas></canvas><div class="placeholder"><span id="camera-message">Enable your webcam to start.</span><small id="camera-help">Use the Enable webcam button beside this preview.</small></div><span class="badge">LOCAL CAMERA \xB7 MIRRORED</span></section>
-<aside><div class="status" role="status">Camera off</div><h2 id="gesture">No hand</h2><p id="hint">Keep one hand visible, with your palm facing the camera.</p><dl><div><dt>Tracking rate</dt><dd id="fps">\u2014</dd></div><div><dt>Inference time</dt><dd id="latency">\u2014</dd></div><div><dt>Palm position</dt><dd id="position">\u2014</dd></div></dl><button id="start">Enable webcam \u2197</button><button id="stop" disabled>Stop camera</button><button id="fullscreen">Fullscreen \u26F6</button><label><input id="overlay" type="checkbox" checked> Show landmarks</label><label class="vol">Music <input id="vol-music" type="range" min="0" max="100" step="1"></label><label class="vol">Effects <input id="vol-sfx" type="range" min="0" max="100" step="1"></label></aside></div>
+<aside><div class="status" role="status">Camera off</div><h2 id="gesture">No hand</h2><p id="hint">Keep one hand visible, with your palm facing the camera.</p><dl><div><dt>Tracking rate</dt><dd id="fps">\u2014</dd></div><div><dt>Inference time</dt><dd id="latency">\u2014</dd></div><div><dt>Palm position</dt><dd id="position">\u2014</dd></div></dl><button id="start">Enable webcam \u2197</button><button id="stop" disabled>Stop camera</button><button id="fullscreen">Fullscreen \u26F6</button><label><input id="overlay" type="checkbox" checked> Show landmarks</label><div id="vol-sliders"></div></aside></div>
 <section class="court" id="court"></section>
 <section class="instructions"><article><b>01 \xB7 MOVE</b><p>Move your hand to position the circular paddle.</p></article><article><b>02 \xB7 CATCH</b><p>Close your hand into a fist.</p></article><article><b>03 \xB7 BOUNCE</b><p>Open your hand and show your palm.</p></article></section><footer>Video stays on this laptop. Everything runs in your browser. Gesture controls are a prototype.</footer></main>`;
 const $ = (s) => document.querySelector(s);
@@ -96,7 +98,7 @@ const video = $("video"), canvas = $(".camera canvas"), ctx = canvas.getContext(
 const drawing = new DrawingUtils(ctx);
 const landmarkFilter = new LandmarkFilter();
 const game = createGame("court");
-let worker, workerReady, busy = false, stream, frame, running = false, starting = false, generation = 0, lastVideoTime = -1, lastTime = 0, fistClosed = false;
+let worker, workerReady, busy = false, stream, frame, running = false, paused = false, starting = false, generation = 0, lastVideoTime = -1, lastTime = 0, fistClosed = false;
 let stableGesture = "neutral", pendingGesture = "neutral", pendingCount = 0, lastPalm = null, palmVelocity = { x: 0, y: 0 };
 const GESTURE_FRAMES = 2, MAX_LEAD_MS = 50, MAX_LEAD_DISTANCE = 0.08;
 const el = { overlay: $("#overlay"), latency: $("#latency"), fps: $("#fps"), position: $("#position"), gesture: $("#gesture") };
@@ -207,7 +209,7 @@ function startWorker() {
 }
 function onWorkerMessage({ data }) {
   busy = false;
-  if (!running) return;
+  if (!running || paused) return;
   if (data.type === "error") {
     stop();
     status(`Tracking stopped: ${data.message}. Try enabling the webcam again.`);
@@ -221,7 +223,7 @@ function onWorkerMessage({ data }) {
   }
 }
 function tick(_now, metadata) {
-  if (!running) return;
+  if (!running || paused) return;
   if (!busy && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
     busy = true;
@@ -244,6 +246,23 @@ function tick(_now, metadata) {
     });
   }
   scheduleFrame();
+}
+// Hand tracking is off while a box is opening: no frames go to the worker and no gestures are published.
+function pauseTracking() {
+  if (!running || paused) return;
+  paused = true;
+  cancelFrame();
+  video.pause(); // the hidden camera feed still decodes and composites under the overlay
+  reset();
+  publish({ tracked: false, timestamp: performance.now(), gesture: "none", position: null, fistClosed: false });
+}
+function resumeTracking() {
+  if (!paused) return;
+  paused = false;
+  if (running) {
+    video.play().catch(() => {});
+    tick();
+  }
 }
 function handleResult(result, captured) {
   const now = performance.now(), elapsed = now - captured;
@@ -410,13 +429,34 @@ const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)");
 const ART = { ball: { url: ballUrl }, paddle: { url: logUrl } };
 const artCache = new Map();
 const hex = (n) => "#" + n.toString(16).padStart(6, "0");
-const loadArt = () => Promise.all(Object.values(ART).map((a) => a.img ? 0 : new Promise((res) => {
-  a.img = new Image();
-  a.img.onload = a.img.onerror = res;
-  a.img.src = a.url;
-})));
+// DEBUG: temporary. Lists frames where the reel's clock or speed jumps.
+function reportReel(trace) {
+  const rows = [];
+  for (let i = 1; i < trace.length; i++) {
+    const a = trace[i - 1], b = trace[i];
+    const wallMs = b.wall - a.wall, clipMs = (b.at - a.at) * 1000, du = b.u - a.u;
+    const prevDu = i > 1 ? a.u - trace[i - 2].u : du;
+    const flags = [];
+    if (wallMs > 20) flags.push("frame gap");
+    if (Math.abs(clipMs - wallMs) > 5) flags.push("clock vs wall");
+    if (Math.abs(du - prevDu) > 0.05) flags.push("speed jump");
+    if (flags.length) rows.push({ clipT: +b.at.toFixed(3), u: +b.u.toFixed(2), wallMs: +wallMs.toFixed(1), clipMs: +clipMs.toFixed(1), du: +du.toFixed(3), prevDu: +prevDu.toFixed(3), flags: flags.join(", ") });
+  }
+  console.log(`reel frames: ${trace.length}, flagged: ${rows.length}`);
+  console.table(rows.slice(0, 40));
+}
+const nextPaint = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+const loadArt = async () => {
+  await Promise.all(Object.values(ART).map((a) => a.img ? 0 : new Promise((res) => {
+    a.img = new Image();
+    a.img.onload = a.img.onerror = res;
+    a.img.src = a.url;
+  })));
+  // Build every skin's display art once up front, so opening a box doesn't stall while it's drawn.
+  for (const sk of SKINS) if (!artCache.has(sk.id)) skinArt(sk);
+};
 function skinArt(skin) {
-  if (artCache.has(skin.id)) return copyCanvas(artCache.get(skin.id));
+  if (artCache.has(skin.id)) return artImage(skin, artCache.get(skin.id));
   const { img } = ART[skin.slot];
   const w = img.naturalWidth || 1, h = img.naturalHeight || 1;
   const c = document.createElement("canvas");
@@ -437,16 +477,28 @@ function skinArt(skin) {
     g.globalCompositeOperation = "destination-in";
     g.drawImage(img, 0, 0);
   }
-  c.className = "bx-art";
-  c.dataset.slot = skin.slot;
-  if (skin.glow) c.style.filter = `drop-shadow(0 0 14px ${hex(skin.glow)})`;
-  artCache.set(skin.id, c);
-  return copyCanvas(c);
+  // Keep a copy at roughly 2x its on-screen size, so reel tiles don't each hold a full-resolution texture.
+  const dispW = skin.slot === "paddle" ? 240 : 150, k = Math.min(1, (dispW * 2) / w);
+  const small = document.createElement("canvas");
+  small.width = Math.round(w * k);
+  small.height = Math.round(h * k);
+  small.getContext("2d").drawImage(c, 0, 0, small.width, small.height);
+  const url = small.toDataURL("image/png");
+  artCache.set(skin.id, url);
+  return artImage(skin, url);
 }
-function copyCanvas(src) {
-  const c = src.cloneNode(false);
-  c.getContext("2d").drawImage(src, 0, 0);
-  return c;
+// Every tile of a skin shares one cached image, so opening a box doesn't allocate a canvas per tile.
+function artImage(skin, url) {
+  const img = new Image();
+  img.src = url;
+  img.className = "bx-art";
+  img.alt = "";
+  img.dataset.slot = skin.slot;
+  if (skin.glow) {
+    img.dataset.glow = "";
+    img.style.setProperty("--glow", hex(skin.glow));
+  }
+  return img;
 }
 const CLIP = {
   lead: 0.1,
@@ -481,7 +533,7 @@ function blip({ freq, end = freq, type = "sine", gain = 0.08, dur = 0.1, delay =
     o.type = type;
     o.frequency.setValueAtTime(freq, t);
     o.frequency.exponentialRampToValueAtTime(end, t + dur);
-    g.gain.setValueAtTime(Math.max(0.0001, gain * volume.sfx), t);
+    g.gain.setValueAtTime(Math.max(0.0001, gain * volume.reveal), t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g).connect(c.destination);
     o.start(t);
@@ -516,6 +568,8 @@ function randomFiller() {
   for (const sk of SKINS.slice().sort(() => Math.random() - 0.5)) if ((r -= weights[sk.rarity] / SKINS.filter((x) => x.rarity === sk.rarity).length) <= 0) return sk;
   return SKINS[0];
 }
+const NEAR_MISS_CHANCE = 0.25;
+const SLOWDOWN_TILES = 8;
 const caseClip = { buf: null };
 async function loadClip() {
   if (caseClip.buf !== null) return;
@@ -526,11 +580,37 @@ async function loadClip() {
     caseClip.buf = false;
   }
 }
+const stingers = { gold: { url: goldClipUrl, buf: null }, nein: { url: neinClipUrl, buf: null } };
+async function loadStinger(s) {
+  if (s.buf !== null) return;
+  try {
+    const res = await fetch(s.url);
+    s.buf = await ac().decodeAudioData(await res.arrayBuffer());
+  } catch {
+    s.buf = false;
+  }
+}
+function playStinger(name) {
+  const buf = stingers[name].buf;
+  if (!buf) return null;
+  try {
+    const c = ac(), gain = c.createGain(), src = c.createBufferSource();
+    gain.gain.value = volume[name];
+    gain.connect(c.destination);
+    src.buffer = buf;
+    src.connect(gain);
+    src.start();
+    return () => { try { src.stop(); } catch {} };
+  } catch {
+    return null;
+  }
+}
 function createClip() {
   const buf = caseClip.buf, c = buf ? ac() : null;
-  let src = null, gain = null, origin = 0;
-  const clock = () => c ? c.currentTime : performance.now() / 1e3;
-  const onVolume = () => { if (gain) gain.gain.value = volume.sfx; };
+  let src = null, gain = null, origin = 0, latency = 0;
+  // The reel follows the wall clock: audioContext.currentTime advances in coarse steps, which made the reel stall and then jump.
+  const wall = () => performance.now() / 1e3;
+  const onVolume = () => { if (gain) gain.gain.value = volume.case; };
   const halt = (fade) => {
     if (!src) return;
     const old = src;
@@ -539,13 +619,14 @@ function createClip() {
     try { old.stop(c.currentTime + (fade ? 0.35 : 0)); } catch {}
   };
   return {
-    now: () => clock() - origin - (c ? c.outputLatency || c.baseLatency || 0 : 0),
+    now: (ts) => (ts ?? performance.now()) / 1e3 - origin - latency,
     play(from = 0) {
-      origin = clock() - from;
+      origin = wall() - from;
+      latency = c ? c.outputLatency || c.baseLatency || 0 : 0;
       if (!c) return;
       halt(false);
       gain = c.createGain();
-      gain.gain.value = volume.sfx;
+      gain.gain.value = volume.case;
       gain.connect(c.destination);
       src = c.createBufferSource();
       src.buffer = buf;
@@ -576,7 +657,7 @@ function placeFlair(stage, view, rarity) {
 }
 async function playBoxOpening(rarity, request) {
   const stage = $("#box-stage"), reel = stage.querySelector(".bx-reel"), done = $("#bx-done"), skipBtn = $("#bx-skip");
-  let skipped = false, onSkip, clip;
+  let skipped = false, onSkip, clip, stopStinger, stopNein = null, neinPlayed = false;
   const skip = new Promise((r) => onSkip = r);
   const doSkip = () => { skipped = true; skipBtn.hidden = true; onSkip(); };
   skipBtn.addEventListener("click", doSkip, { once: true });
@@ -594,6 +675,14 @@ async function playBoxOpening(rarity, request) {
   const music = game.sound?.get("music");
   const pausedMusic = !!music?.isPlaying;
   if (pausedMusic) music.pause();
+  caseOpen.active = true;
+  // The court and side panels are covered by the overlay; hide them so the browser doesn't composite them every frame.
+  const hidden = [$("#court"), document.querySelector("aside:not(#lb)"), $("#lb")].filter(Boolean);
+  hidden.forEach((el) => el.style.visibility = "hidden");
+  // The court keeps rendering under the overlay; pause it so the GPU is free for the reel.
+  game.loop?.sleep();
+  pauseTracking();
+  for (const snd of game.sound?.sounds ?? []) if (/^(bounce|woosh)/.test(snd.key)) snd.stop();
   stage.style.backgroundImage = `url(${bgUrl})`;
   stage.dataset.phase = "wait";
   stage.dataset.rarity = rarity;
@@ -603,39 +692,62 @@ async function playBoxOpening(rarity, request) {
   reel.replaceChildren();
   stage.hidden = false;
   try {
-    const [res] = await Promise.all([request(), loadArt(), loadClip()]);
+    const [res] = await Promise.all([request(), loadArt(), loadClip(), ...Object.values(stingers).map(loadStinger)]);
     const skin = skinById(res.skin);
-    reel.replaceChildren(...Array.from({ length: REEL_LEN }, (_, i) => reelTile(i === REEL_WIN ? skin : randomFiller())));
+    const legendaries = SKINS.filter((sk) => sk.rarity === "legendary");
+    const bait = skin.rarity !== "legendary" && Math.random() < NEAR_MISS_CHANCE ? legendaries[Math.floor(Math.random() * legendaries.length)] : null;
+    reel.replaceChildren(...Array.from({ length: REEL_LEN }, (_, i) => reelTile(i === REEL_WIN ? skin : i === REEL_WIN - 2 && bait ? bait : randomFiller())));
     const view = stage.querySelector(".bx-view");
     const step = REEL_TILE + REEL_GAP;
     const uEnd = REEL_WIN + 0.55 + Math.random() * 0.3;
     const curve = makeCurve([CLIP.lead, ...CLIP.ticks, CLIP.hit], [0.45, ...CLIP.ticks.map((_, i) => i + 1), uEnd]);
-    const place = (u) => { reel.style.transform = `translateX(${view.clientWidth / 2 - u * step}px)`; };
+    const halfView = view.clientWidth / 2;
+    const place = (u) => { reel.style.transform = `translateX(${halfView - u * step}px)`; };
     let lastTile = -1;
+    const playNein = () => {
+      if (neinPlayed || skin.rarity === "legendary") return;
+      neinPlayed = true;
+      stopNein = playStinger("nein");
+    };
     const setCenter = (u) => {
       const tile = Math.floor(u);
       if (tile === lastTile) return;
       reel.children[lastTile]?.classList.remove("center");
       lastTile = tile;
       reel.children[tile]?.classList.add("center");
+      // Passing a legendary during the final slowdown counts as a near miss.
+      if (tile >= REEL_WIN - SLOWDOWN_TILES && tile < REEL_WIN && reel.children[tile]?.dataset.rarity === "legendary") playNein();
     };
     place(0.45);
     setCenter(0.45);
+    // Let the new tiles paint before the reel clock starts, so the first paint isn't counted as lost spin time.
+    await Promise.all([...reel.querySelectorAll("img")].map((img) => img.decode().catch(() => {})));
+    if (!quick) await nextPaint();
     clip = createClip();
     if (!quick) clip.play(0);
     stage.dataset.phase = "unlock";
     skipBtn.hidden = false;
     skipBtn.focus();
     if (!quick) await new Promise((resolve) => {
-      let spun = false;
-      const frame = () => {
-        const at = clip.now();
-        if (skipped || at >= CLIP.hit) return resolve();
+      let spun = false, goldStarted = false;
+      const trace = import.meta.env.DEV ? [] : null; // DEBUG: temporary, dev builds only
+      const frame = (ts) => {
+        const at = clip.now(ts);
+        if (skipped || at >= CLIP.hit) {
+          if (trace) reportReel(trace);
+          return resolve();
+        }
         if (!spun && at >= CLIP.lead) {
           spun = true;
           stage.dataset.phase = "spin";
         }
         const u = curve(at);
+        // GOLD starts once the winning tile is on screen, and stops when the reel lands (below).
+        if (!goldStarted && skin.rarity === "legendary" && !skipped && u >= REEL_WIN - halfView / step) {
+          goldStarted = true;
+          stopStinger = playStinger("gold");
+        }
+        if (trace) trace.push({ at, u, wall: ts ?? performance.now() });
         place(u);
         setCenter(u);
         requestAnimationFrame(frame);
@@ -643,6 +755,8 @@ async function playBoxOpening(rarity, request) {
       requestAnimationFrame(frame);
     });
     skipBtn.hidden = true;
+    stopStinger?.();
+    stopStinger = null;
     place(uEnd);
     setCenter(uEnd);
     if (skipped || quick) {
@@ -653,6 +767,10 @@ async function playBoxOpening(rarity, request) {
     stage.dataset.rarity = skin.rarity;
     placeFlair(stage, stage.querySelector(".bx-view"), skin.rarity);
     sfx.reveal(skin.rarity);
+    // A near miss is any legendary tile still on screen when the reel stops, other than the winner.
+    const onScreen = view.clientWidth / 2;
+    const nearMiss = skin.rarity !== "legendary" && Array.from(reel.children).some((el, i) => i !== REEL_WIN && el.dataset.rarity === "legendary" && Math.abs(i - uEnd) * step < onScreen);
+    if (nearMiss) playNein();
     stage.querySelector(".bx-rarity").textContent = `${RARITY_LABEL(skin.rarity)} ${skin.slot}`;
     stage.querySelector(".bx-name").textContent = skin.name;
     stage.querySelector(".bx-dupe").textContent = res.duplicate ? `You already had this one: +${res.bonus ?? 0} rally at the start of your next round` : "New skin!";
@@ -662,7 +780,13 @@ async function playBoxOpening(rarity, request) {
     await new Promise((r) => done.addEventListener("click", r, { once: true }));
     return res;
   } finally {
+    caseOpen.active = false;
+    hidden.forEach((el) => el.style.visibility = "");
+    game.loop?.wake(true);
+    resumeTracking();
     clip?.stop();
+    stopStinger?.();
+    stopNein?.();
     window.removeEventListener("keydown", onKey, true);
     skipBtn.removeEventListener("click", doSkip);
     skipBtn.hidden = true;
@@ -938,11 +1062,13 @@ setBonusClaimer(async () => {
   loot.bonus = 0;
   return res.bonus ?? 0;
 });
-for (const [id, kind] of [["#vol-music", "music"], ["#vol-sfx", "sfx"]]) {
-  const input = $(id);
-  input.value = Math.round(volume[kind] * 100);
-  input.addEventListener("input", () => setVolume(kind, input.value / 100));
-}
+$("#vol-sliders").replaceChildren(...CHANNELS.map(({ key, label }) => {
+  const row = document.createElement("label");
+  row.className = "vol";
+  row.append(label, Object.assign(document.createElement("input"), { id: `vol-${key}`, type: "range", min: 0, max: 100, step: 1, value: Math.round(volume[key] * 100) }));
+  row.lastChild.addEventListener("input", () => setVolume(key, row.lastChild.value / 100));
+  return row;
+}));
 window.addEventListener("bounce:bonus", ({ detail: { bonus } }) => toast(`Duplicate bonus: +${bonus} rally`));
 window.addEventListener("bounce:rallyend", () => {
   boxChain = boxChain.then(() => {

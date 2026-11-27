@@ -3,7 +3,7 @@ import { net } from "./net.js";
 import ballUrl from "../assets/textures/ball.png";
 import bgUrl from "../assets/textures/bg.png";
 import logUrl from "../assets/textures/log.png";
-import musicUrl from "../assets/audio/BBacking.wav";
+import musicUrl from "../assets/audio/BBacking-loop.wav";
 import bounce1Url from "../assets/audio/Bounce1.wav";
 import bounce2Url from "../assets/audio/Bounce2.wav";
 import bounce3Url from "../assets/audio/Bounce3.wav";
@@ -12,7 +12,7 @@ import woosh2Url from "../assets/audio/Woosh2.wav";
 import woosh3Url from "../assets/audio/Woosh3.wav";
 import { exitTarget, entryState, predictExit } from "./topology.js";
 import { skinById, MILESTONES, MAX_PENDING_BONUS } from "./skins.js";
-import { volume as vol, volumeEvents } from "./volume.js";
+import { volume as vol, volumeEvents, caseOpen } from "./volume.js";
 const WIDTH = 800, HEIGHT = 450;
 const RES = 2;
 const PADDLE = { length: 180, thickness: 24, hitPad: 12 };
@@ -92,8 +92,9 @@ class CourtScene extends Phaser.Scene {
     BOUNCE_KEYS.forEach((k, i) => this.load.audio(k, [bounce1Url, bounce2Url, bounce3Url][i]));
     WOOSH_KEYS.forEach((k, i) => this.load.audio(k, [woosh1Url, woosh2Url, woosh3Url][i]));
   }
-  sfx(keys, volume = 0.8) {
-    this.sound.play(Phaser.Utils.Array.GetRandom(keys), { volume: volume * vol.sfx });
+  sfx(keys, channel, volume = 0.8) {
+    if (caseOpen.active) return;
+    this.sound.play(Phaser.Utils.Array.GetRandom(keys), { volume: volume * vol[channel] });
   }
   create() {
     this.sound.play("music", { loop: true, volume: MUSIC_VOLUME * vol.music });
@@ -355,7 +356,7 @@ BEST ${this.best}`);
         v.x = this.paddleVelocity.x;
         v.y = this.paddleVelocity.y;
       }
-      this.sfx(WOOSH_KEYS);
+      this.sfx(WOOSH_KEYS, "woosh");
     }
     if (this.held) {
       const k = 1 - Math.exp(-30 * dt);
@@ -429,7 +430,7 @@ BEST ${this.best}`);
       ball.x = c.x + nx * reach;
       ball.y = c.y + ny * reach;
       const rel = (v.x - this.paddleVelocity.x) * nx + (v.y - this.paddleVelocity.y) * ny;
-      if (rel < -60) this.sfx(BOUNCE_KEYS, Math.min(1, 0.4 + -rel / 800));
+      if (rel < -60) this.sfx(BOUNCE_KEYS, "bounce", Math.min(1, 0.4 + -rel / 800));
       if (rel < 0) {
         v.x -= (1 + BALL.paddleBounce) * rel * nx;
         v.y -= (1 + BALL.paddleBounce) * rel * ny;

@@ -1,6 +1,6 @@
 import * as oauth from "oauth4webapi";
 import { refreshDisplayName } from "./names.js";
-import { rarityOf, pickSkin, rollRarity, parseEquipped, skinById, SLOTS, DUPLICATE_BONUS, MAX_PENDING_BONUS, WELCOME_BOXES, isFeedWorthy } from "../../src/skins.js";
+import { MILESTONES, rarityOf, pickSkin, rollRarity, parseEquipped, skinById, SLOTS, DUPLICATE_BONUS, MAX_PENDING_BONUS, WELCOME_BOXES, isFeedWorthy } from "../../src/skins.js";
 const ISSUER = new URL("https://auth.hackclub.com");
 const SCOPE = "openid slack_id";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -114,6 +114,9 @@ const HISTORY_SIZE = 10;
 async function me(request, env) {
   const user = await authenticate(request, env);
   if (!user) return json(request, env, { error: "unauthorized" }, 401);
+  if (env.DEV_INFINITE_BOXES === "1") await env.DB.batch(MILESTONES.map((m) => env.DB.prepare(
+    "INSERT INTO box_awards (user_id, threshold, awarded_at) SELECT ?1, ?2, ?3 WHERE NOT EXISTS (SELECT 1 FROM box_awards WHERE user_id = ?1 AND threshold = ?2 AND opened_at IS NULL)"
+  ).bind(user.id, m.threshold, Date.now())));
   const [boxes, skins, scores, history] = await env.DB.batch([
     env.DB.prepare("SELECT id, threshold FROM box_awards WHERE user_id = ? AND opened_at IS NULL ORDER BY threshold, id").bind(user.id),
     env.DB.prepare("SELECT skin_id, seen FROM inventory WHERE user_id = ? ORDER BY acquired_at").bind(user.id),
